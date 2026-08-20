@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=BandHub Firmware Update
+Comment=Install signed BandHub Dongle and Controller firmware
+Exec=bandhub-firmware-update
+Icon=bandhub-firmware-update
+Terminal=false
+Categories=Utility;System;

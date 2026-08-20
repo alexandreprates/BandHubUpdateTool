@@ -1,0 +1,2 @@
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="2882", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="12ba", ATTRS{idProduct}=="0200", TAG+="uaccess"

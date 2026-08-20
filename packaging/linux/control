@@ -1,0 +1,8 @@
+Package: bandhub-firmware-update
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: all
+Depends: mono-runtime (>= 6.8), libgtk-3-0 | libgtk-3-0t64
+Maintainer: BandHub
+Description: Signed firmware updater for BandHub Dongles and Controllers

@@ -1,0 +1,42 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="BandHub Firmware Update"
+           Manufacturer="BandHub"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="5B89B160-BF54-4F36-AB94-9758733324A8"
+           Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer BandHub Firmware Update is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="BANDHUBFOLDER" Name="BandHub">
+        <Directory Id="INSTALLFOLDER" Name="FirmwareUpdate">
+          <Component Id="ApplicationShortcut" Guid="*">
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="BandHub Firmware Update"
+                      Target="[INSTALLFOLDER]BandHub.FirmwareUpdate.exe"
+                      WorkingDirectory="INSTALLFOLDER" />
+            <RegistryValue Root="HKLM"
+                           Key="Software\BandHub\FirmwareUpdate"
+                           Name="Installed"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <ComponentGroup Id="ApplicationFiles"
+                    Directory="INSTALLFOLDER"
+                    Source="$(var.SourceDirectory)">
+      <Files Include="**" />
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="BandHub Firmware Update" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+  </Package>
+</Wix>
