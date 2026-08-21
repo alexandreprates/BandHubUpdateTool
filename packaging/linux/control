@@ -2,7 +2,10 @@ Package: bandhub-firmware-update
 Version: @VERSION@
 Section: utils
 Priority: optional
-Architecture: all
-Depends: mono-runtime (>= 6.8), libgtk-3-0 | libgtk-3-0t64
+Architecture: @ARCHITECTURE@
+Depends: ca-certificates, libbrotli1, libc6, libgcc-s1,
+ libgssapi-krb5-2, libgtk-3-0 | libgtk-3-0t64,
+ libicu78 | libicu74 | libicu72 | libicu70,
+ libssl3t64 | libssl3, libstdc++6, libudev1, tzdata, zlib1g
 Maintainer: BandHub
 Description: Signed firmware updater for BandHub Dongles and Controllers

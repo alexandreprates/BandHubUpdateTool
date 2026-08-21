@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
@@ -19,6 +23,17 @@ namespace BandHub.FirmwareUpdate.Tests;
 public sealed class ReleaseSourceTests
 {
     [Test]
+    public void CloudflareR2SourceEmbedsProductionPublicDomain()
+    {
+        var baseUrl = typeof(CloudflareR2ReleaseSource).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .Single(attribute => attribute.Key == "BandHubReleaseBaseUrl")
+            .Value;
+
+        Assert.That(baseUrl, Is.EqualTo("https://bandhub.alexandreprates.dev/"));
+    }
+
+    [Test]
     public async Task LocalBundleLoadsSignedExactTargetPackages()
     {
         var path = CreateBundle(FirmwareTarget.ControllerGh3);
@@ -29,7 +44,26 @@ public sealed class ReleaseSourceTests
 
             Assert.That(selection.DonglePackage.Target, Is.EqualTo(FirmwareTarget.DongleZeroPc));
             Assert.That(selection.ControllerPackage?.Target, Is.EqualTo(FirmwareTarget.ControllerGh3));
-            Assert.That(selection.Manifest.ReleaseVersion, Is.EqualTo("test-1"));
+            Assert.That(selection.DongleManifest.ReleaseVersion, Is.EqualTo("test-1"));
+            Assert.That(selection.ControllerManifest, Is.SameAs(selection.DongleManifest));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task LocalBundleLoadsLegacyFlatSchemaOnePackages()
+    {
+        var path = CreateBundle(FirmwareTarget.ControllerGh3, versionedPaths: false);
+        try
+        {
+            var selection = await new LocalBundleReleaseSource(path).LoadAsync(
+                SupportedDevice(), CancellationToken.None);
+
+            Assert.That(selection.DonglePackage.Target, Is.EqualTo(FirmwareTarget.DongleZeroPc));
+            Assert.That(selection.ControllerPackage?.Target, Is.EqualTo(FirmwareTarget.ControllerGh3));
         }
         finally
         {
@@ -53,6 +87,52 @@ public sealed class ReleaseSourceTests
         }
     }
 
+    [Test]
+    public async Task CloudflareR2SourceLoadsVersionedComponentObjects()
+    {
+        const uint firmwareVersion = 0x00030000;
+        var donglePackage = BuildPackage(FirmwareTarget.DongleZeroPc, firmwareVersion);
+        var controllerPackage = BuildPackage(FirmwareTarget.ControllerGh3, firmwareVersion);
+        var dongleManifest = BuildComponentManifest(
+            "dongle", "1.2.0", "dongle-zero-pc", donglePackage, firmwareVersion);
+        var controllerManifest = BuildComponentManifest(
+            "controller", "1.3.0", "controller-gh3", controllerPackage, firmwareVersion);
+        const string baseUrl = "https://firmware.example.test/bandhub-releases/";
+        var responses = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+        {
+            [$"{baseUrl}dongle/release.json"] = dongleManifest,
+            [$"{baseUrl}dongle/release.json.sig"] = Sign(dongleManifest),
+            [$"{baseUrl}controller/release.json"] = controllerManifest,
+            [$"{baseUrl}controller/release.json.sig"] = Sign(controllerManifest),
+            [$"{baseUrl}dongle/1.2.0/dongle-zero-pc.bhfw"] = donglePackage,
+            [$"{baseUrl}controller/1.3.0/controller-gh3.bhfw"] = controllerPackage,
+        };
+        var handler = new StaticResponseHandler(responses);
+        using var source = new CloudflareR2ReleaseSource(
+            new HttpClient(handler), baseUrl.TrimEnd('/'));
+
+        var selection = await source.LoadAsync(SupportedDevice(), CancellationToken.None);
+
+        Assert.That(selection.DonglePackage.Target, Is.EqualTo(FirmwareTarget.DongleZeroPc));
+        Assert.That(selection.ControllerPackage?.Target, Is.EqualTo(FirmwareTarget.ControllerGh3));
+        Assert.That(selection.DongleManifest.ReleaseVersion, Is.EqualTo("1.2.0"));
+        Assert.That(selection.ControllerManifest?.ReleaseVersion, Is.EqualTo("1.3.0"));
+        Assert.That(handler.RequestedUris, Is.EquivalentTo(responses.Keys));
+    }
+
+    [Test]
+    public void CloudflareR2SourceRejectsAuthenticatedS3EndpointAsPublicUrl()
+    {
+        const string endpoint =
+            "https://example.r2.cloudflarestorage.com/bandhub-releases";
+        using var client = new HttpClient();
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            new CloudflareR2ReleaseSource(client, endpoint));
+
+        Assert.That(error?.Message, Does.Contain("S3 endpoint"));
+    }
+
     private static DeviceInfo SupportedDevice() => new()
     {
         Capabilities = 0x03,
@@ -67,35 +147,86 @@ public sealed class ReleaseSourceTests
         ControllerMac = new byte[] { 0x02, 6, 7, 8, 9, 10 },
     };
 
-    private static string CreateBundle(FirmwareTarget controllerPackageTarget)
+    private static string CreateBundle(
+        FirmwareTarget controllerPackageTarget,
+        bool versionedPaths = true)
     {
         const uint firmwareVersion = 0x00030000;
         var donglePackage = BuildPackage(FirmwareTarget.DongleZeroPc, firmwareVersion);
         var controllerPackage = BuildPackage(controllerPackageTarget, firmwareVersion);
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new
+        var manifest = BuildManifest(
+            donglePackage, controllerPackage, firmwareVersion, versionedPaths);
+        var path = Path.Combine(
+            Path.GetTempPath(), $"bandhub-release-{Guid.NewGuid():N}.bhrelease");
+        using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+        WriteEntry(archive, "release.json", manifest);
+        WriteEntry(archive, "release.json.sig", Sign(manifest));
+        WriteEntry(
+            archive,
+            versionedPaths
+                ? "dongle/test-1/dongle-zero-pc.bhfw"
+                : "dongle-zero-pc.bhfw",
+            donglePackage);
+        WriteEntry(
+            archive,
+            versionedPaths
+                ? "controller/test-1/controller-gh3.bhfw"
+                : "controller-gh3.bhfw",
+            controllerPackage);
+        return path;
+    }
+
+    private static byte[] BuildManifest(
+        byte[] donglePackage,
+        byte[] controllerPackage,
+        uint firmwareVersion,
+        bool versionedPaths) =>
+        JsonSerializer.SerializeToUtf8Bytes(new
         {
             artifacts = new object[]
             {
-                Artifact("dongle", "dongle-zero-pc", "dongle-zero-pc.bhfw",
+                Artifact("dongle", "dongle-zero-pc",
+                         versionedPaths
+                             ? "dongle/test-1/dongle-zero-pc.bhfw"
+                             : "dongle-zero-pc.bhfw",
                          firmwareVersion, donglePackage),
-                Artifact("controller", "controller-gh3", "controller-gh3.bhfw",
+                Artifact("controller", "controller-gh3",
+                         versionedPaths
+                             ? "controller/test-1/controller-gh3.bhfw"
+                             : "controller-gh3.bhfw",
                          firmwareVersion, controllerPackage),
             },
             channel = "stable",
             maximumOtaProtocol = 1,
             minimumOtaProtocol = 1,
             releaseVersion = "test-1",
-            schemaVersion = 1,
+            schemaVersion = versionedPaths ? 2 : 1,
         });
-        var path = Path.Combine(
-            Path.GetTempPath(), $"bandhub-release-{Guid.NewGuid():N}.bhrelease");
-        using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
-        WriteEntry(archive, "release.json", manifest);
-        WriteEntry(archive, "release.json.sig", Sign(manifest));
-        WriteEntry(archive, "dongle-zero-pc.bhfw", donglePackage);
-        WriteEntry(archive, "controller-gh3.bhfw", controllerPackage);
-        return path;
-    }
+
+    private static byte[] BuildComponentManifest(
+        string component,
+        string releaseVersion,
+        string target,
+        byte[] package,
+        uint firmwareVersion) =>
+        JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            artifacts = new object[]
+            {
+                Artifact(
+                    component,
+                    target,
+                    $"{component}/{releaseVersion}/{target}.bhfw",
+                    firmwareVersion,
+                    package),
+            },
+            channel = "stable",
+            component,
+            maximumOtaProtocol = 1,
+            minimumOtaProtocol = 1,
+            releaseVersion,
+            schemaVersion = 3,
+        });
 
     private static object Artifact(
         string component,
@@ -226,5 +357,32 @@ public sealed class ReleaseSourceTests
         output[offset + 1] = (byte)(value >> 8);
         output[offset + 2] = (byte)(value >> 16);
         output[offset + 3] = (byte)(value >> 24);
+    }
+
+    private sealed class StaticResponseHandler : HttpMessageHandler
+    {
+        private readonly IReadOnlyDictionary<string, byte[]> responses;
+
+        public StaticResponseHandler(IReadOnlyDictionary<string, byte[]> responses) =>
+            this.responses = responses;
+
+        public List<string> RequestedUris { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var uri = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            RequestedUris.Add(uri);
+            if (!responses.TryGetValue(uri, out var content))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(content),
+            });
+        }
     }
 }

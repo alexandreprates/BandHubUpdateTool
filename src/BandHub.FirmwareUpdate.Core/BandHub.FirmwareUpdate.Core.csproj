@@ -1,14 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
+    <BandHubReleaseBaseUrl Condition="'$(BandHubReleaseBaseUrl)' == ''">https://bandhub.alexandreprates.dev/</BandHubReleaseBaseUrl>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="System.IO.Compression.ZipFile" Version="4.3.0" />
   </ItemGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>BandHubReleaseBaseUrl</_Parameter1>
+      <_Parameter2>$(BandHubReleaseBaseUrl)</_Parameter2>
+    </AssemblyAttribute>
     <EmbeddedResource Include="../../../pki/controller-ota-public.hex"
                       Link="Security/release-public-key.hex" />
   </ItemGroup>

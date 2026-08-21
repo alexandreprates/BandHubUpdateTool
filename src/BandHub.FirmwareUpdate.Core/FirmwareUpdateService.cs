@@ -144,7 +144,7 @@ public sealed class FirmwareUpdateService
                 {
                     reporter.Report(
                         "controller", 0,
-                        "Press and hold Guide/PS on the Controller to authorize the update.");
+                        "Controller update armed; waiting for automatic acceptance.");
                     await WaitForControllerAsync(
                         dongle,
                         release.ControllerPackage!.FirmwareVersion,
@@ -331,7 +331,7 @@ public sealed class FirmwareUpdateService
             progress.Report(
                 "controller", percent,
                 status.State == OtaState.Negotiating
-                    ? "Waiting for Guide/PS authorization..."
+                    ? "Waiting for the Controller to accept the update..."
                     : "Updating the Controller...");
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
@@ -386,11 +386,16 @@ public sealed class FirmwareUpdateService
     private static void ValidateControllerReady(DeviceInfo info)
     {
         ValidateControllerIdentity(info);
-        if (!info.BatteryValid || info.ControllerBatteryPercent < 30)
+        if (!HasSufficientControllerPower(info))
         {
-            throw new InvalidOperationException("Controller battery must be available and at least 30%.");
+            throw new InvalidOperationException(
+                "Controller requires at least 30% battery or external power with the battery absent.");
         }
     }
+
+    internal static bool HasSufficientControllerPower(DeviceInfo info) =>
+        info.ControllerExternallyPowered ||
+        (info.BatteryValid && info.ControllerBatteryPercent >= 30);
 
     private static void ValidateControllerIdentity(DeviceInfo info)
     {
@@ -422,8 +427,7 @@ public sealed class FirmwareUpdateService
             last = await dongle.ReadDeviceInfoAsync(cancellationToken).ConfigureAwait(false);
             if (last.SupportsControllerOta && last.SupportsControllerPackageV2 &&
                 last.ControllerBound &&
-                last.ControllerConnected && last.BatteryValid &&
-                last.ControllerBatteryPercent >= 30)
+                last.ControllerConnected && HasSufficientControllerPower(last))
             {
                 return last;
             }

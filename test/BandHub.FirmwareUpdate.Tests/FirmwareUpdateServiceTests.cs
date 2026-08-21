@@ -71,6 +71,23 @@ public sealed class FirmwareUpdateServiceTests
         Assert.That(release.Loaded, Is.False);
     }
 
+    [TestCase(0x17, 0, true)]
+    [TestCase(0x07, 0, false)]
+    [TestCase(0x07, 30, true)]
+    [TestCase(0x03, 80, false)]
+    public void ControllerPowerPreflightRequiresBatteryOrExternalPower(
+        byte flags,
+        byte controllerBatteryPercent,
+        bool expected)
+    {
+        var info = SupportedDevice(
+            flags: flags, controllerBatteryPercent: controllerBatteryPercent);
+
+        Assert.That(
+            FirmwareUpdateService.HasSufficientControllerPower(info),
+            Is.EqualTo(expected));
+    }
+
     [TestCase(OtaState.Serving, 0)]
     [TestCase(OtaState.Error, 15)]
     public void RecoveryRefreshesControllerIdentityBeforeLoadingRelease(
@@ -132,7 +149,8 @@ public sealed class FirmwareUpdateServiceTests
     private static DeviceInfo SupportedDevice(
         uint controllerFeatures = (1U << 7) | (1U << 10),
         byte[]? dongleMac = null,
-        byte flags = 0x07) => new()
+        byte flags = 0x07,
+        byte controllerBatteryPercent = 80) => new()
     {
         Capabilities = 0x03,
         UsbProfile = 1,
@@ -141,7 +159,7 @@ public sealed class FirmwareUpdateServiceTests
         ControllerTarget = FirmwareTarget.ControllerGh3,
         ControllerFirmwareVersion = 0x00020000,
         ControllerFeatureFlags = controllerFeatures,
-        ControllerBatteryPercent = 80,
+        ControllerBatteryPercent = controllerBatteryPercent,
         Flags = flags,
         DongleMac = dongleMac ?? new byte[] { 0x02, 1, 2, 3, 4, 5 },
         ControllerMac = new byte[] { 0x02, 6, 7, 8, 9, 10 },

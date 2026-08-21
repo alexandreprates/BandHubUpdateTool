@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,6 +54,9 @@ public sealed class ReleaseManifest
     [JsonProperty("schemaVersion", Required = Required.Always)]
     public int SchemaVersion { get; set; }
 
+    [JsonProperty("component", Required = Required.Default)]
+    public string Component { get; set; } = string.Empty;
+
     [JsonProperty("releaseVersion", Required = Required.Always)]
     public string ReleaseVersion { get; set; } = string.Empty;
 
@@ -97,21 +101,36 @@ public sealed class ReleaseManifest
 
     private void Validate()
     {
-        if (SchemaVersion != 1 || Channel != "stable" || string.IsNullOrWhiteSpace(ReleaseVersion) ||
+        if ((SchemaVersion != 1 && SchemaVersion != 2 && SchemaVersion != 3) ||
+            Channel != "stable" ||
+            string.IsNullOrWhiteSpace(ReleaseVersion) ||
+            ReleaseVersion == "." || ReleaseVersion == ".." ||
+            ReleaseVersion.Any(value => !char.IsAsciiLetterOrDigit(value) &&
+                                        value != '.' && value != '-' && value != '+') ||
             MinimumOtaProtocol != 1 || MaximumOtaProtocol != 1 || Artifacts.Count == 0)
         {
             throw new InvalidDataException("Release manifest metadata is unsupported.");
         }
         var targets = new HashSet<FirmwareTarget>();
         var assets = new HashSet<string>(StringComparer.Ordinal);
+        if ((SchemaVersion == 3 && Component != "controller" && Component != "dongle") ||
+            (SchemaVersion != 3 && !string.IsNullOrEmpty(Component)))
+        {
+            throw new InvalidDataException("Release manifest component is invalid.");
+        }
         foreach (var artifact in Artifacts)
         {
             var target = artifact.ParsedTarget;
+            var component = target is FirmwareTarget.ControllerGh3 or FirmwareTarget.ControllerGh5
+                ? "controller"
+                : "dongle";
+            var expectedAsset = SchemaVersion == 1
+                ? $"{artifact.Target}.bhfw"
+                : $"{component}/{ReleaseVersion}/{artifact.Target}.bhfw";
             if (artifact.FirmwareVersion == 0 || artifact.Size <= FirmwarePackage.HeaderBytes ||
                 artifact.MinimumPeerVersion > artifact.MaximumPeerVersion ||
-                string.IsNullOrWhiteSpace(artifact.Asset) || artifact.Asset == "." ||
-                artifact.Asset == ".." || artifact.Asset.Contains("/") ||
-                artifact.Asset.Contains("\\") ||
+                artifact.Component != component || artifact.Asset != expectedAsset ||
+                (SchemaVersion == 3 && Component != component) ||
                 artifact.Sha256.Length != 64 ||
                 artifact.Sha256.Any(value => !Uri.IsHexDigit(value)) ||
                 !targets.Add(target) || !assets.Add(artifact.Asset))
@@ -124,7 +143,8 @@ public sealed class ReleaseManifest
 
 public sealed class ReleaseSelection
 {
-    public ReleaseManifest Manifest { get; init; } = new();
+    public ReleaseManifest DongleManifest { get; init; } = new();
+    public ReleaseManifest? ControllerManifest { get; init; }
     public FirmwarePackage DonglePackage { get; init; } = null!;
     public FirmwarePackage? ControllerPackage { get; init; }
 }
@@ -134,17 +154,20 @@ public interface IReleaseSource
     Task<ReleaseSelection> LoadAsync(DeviceInfo device, CancellationToken cancellationToken);
 }
 
-public sealed class GitHubReleaseSource : IReleaseSource, IDisposable
+public sealed class CloudflareR2ReleaseSource : IReleaseSource, IDisposable
 {
-    public const string DefaultBaseUrl =
-        "https://github.com/alexandreprates/BandHub-Releases/releases/latest/download/";
+    public const string PublicBaseUrlEnvironmentVariable =
+        "BANDHUB_RELEASES_PUBLIC_BASE_URL";
+    private const string PublicBaseUrlMetadataKey = "BandHubReleaseBaseUrl";
 
     private readonly HttpClient client;
+    private readonly Uri baseUri;
     private readonly byte[] publicKey;
 
-    public GitHubReleaseSource(HttpClient? client = null)
+    public CloudflareR2ReleaseSource(HttpClient? client = null, string? baseUrl = null)
     {
         this.client = client ?? new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        baseUri = ResolveBaseUri(baseUrl);
         publicKey = FirmwarePackage.LoadEmbeddedPublicKey();
     }
 
@@ -152,20 +175,30 @@ public sealed class GitHubReleaseSource : IReleaseSource, IDisposable
         DeviceInfo device,
         CancellationToken cancellationToken)
     {
-        var json = await GetAsync("release.json", cancellationToken).ConfigureAwait(false);
-        var signature = await GetAsync("release.json.sig", cancellationToken).ConfigureAwait(false);
-        var manifest = ReleaseManifest.ParseAndVerify(json, signature, publicKey);
-        var dongleArtifact = manifest.Find(device.DongleTarget);
-        var controllerArtifact = device.ControllerTarget == 0
-            ? null
-            : manifest.Find(device.ControllerTarget);
+        var dongleManifest = await LoadManifestAsync("dongle", cancellationToken)
+            .ConfigureAwait(false);
+        var dongleArtifact = dongleManifest.Find(device.DongleTarget);
+        ReleaseManifest? controllerManifest = null;
+        ReleaseArtifact? controllerArtifact = null;
+        if (device.ControllerTarget != 0)
+        {
+            controllerManifest = await LoadManifestAsync("controller", cancellationToken)
+                .ConfigureAwait(false);
+            controllerArtifact = controllerManifest.Find(device.ControllerTarget);
+        }
         var donglePackage = await LoadPackageAsync(dongleArtifact, cancellationToken)
             .ConfigureAwait(false);
         var controllerPackage = controllerArtifact == null
             ? null
             : await LoadPackageAsync(controllerArtifact, cancellationToken).ConfigureAwait(false);
-        return ValidateSelection(device, manifest, dongleArtifact, controllerArtifact,
-                                 donglePackage, controllerPackage);
+        return ValidateSelection(
+            device,
+            dongleManifest,
+            controllerManifest,
+            dongleArtifact,
+            controllerArtifact,
+            donglePackage,
+            controllerPackage);
     }
 
     public void Dispose() => client.Dispose();
@@ -181,17 +214,70 @@ public sealed class GitHubReleaseSource : IReleaseSource, IDisposable
         return package;
     }
 
+    private async Task<ReleaseManifest> LoadManifestAsync(
+        string component,
+        CancellationToken cancellationToken)
+    {
+        var json = await GetAsync($"{component}/release.json", cancellationToken)
+            .ConfigureAwait(false);
+        var signature = await GetAsync(
+                $"{component}/release.json.sig", cancellationToken)
+            .ConfigureAwait(false);
+        var manifest = ReleaseManifest.ParseAndVerify(json, signature, publicKey);
+        if (manifest.SchemaVersion != 3 || manifest.Component != component)
+        {
+            throw new InvalidDataException(
+                $"The {component} release catalog is not a component manifest.");
+        }
+        return manifest;
+    }
+
     private async Task<byte[]> GetAsync(string asset, CancellationToken cancellationToken)
     {
-        using var response = await client.GetAsync(DefaultBaseUrl + asset, cancellationToken)
+        using var response = await client.GetAsync(new Uri(baseUri, asset), cancellationToken)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
     }
 
+    private static Uri ResolveBaseUri(string? explicitBaseUrl)
+    {
+        var configured = explicitBaseUrl;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            configured = Environment.GetEnvironmentVariable(PublicBaseUrlEnvironmentVariable);
+        }
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            configured = typeof(CloudflareR2ReleaseSource).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .SingleOrDefault(attribute => attribute.Key == PublicBaseUrlMetadataKey)
+                ?.Value;
+        }
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            throw new InvalidOperationException(
+                "The Cloudflare R2 public release URL was not configured.");
+        }
+        if (!Uri.TryCreate(configured.Trim().TrimEnd('/') + "/", UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new InvalidOperationException(
+                "The Cloudflare R2 public release URL must be an absolute HTTPS URL.");
+        }
+        if (uri.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The authenticated Cloudflare R2 S3 endpoint cannot be used as the public release URL.");
+        }
+        return uri;
+    }
+
     internal static ReleaseSelection ValidateSelection(
         DeviceInfo device,
-        ReleaseManifest manifest,
+        ReleaseManifest dongleManifest,
+        ReleaseManifest? controllerManifest,
         ReleaseArtifact dongleArtifact,
         ReleaseArtifact? controllerArtifact,
         FirmwarePackage donglePackage,
@@ -215,7 +301,8 @@ public sealed class GitHubReleaseSource : IReleaseSource, IDisposable
         }
         return new ReleaseSelection
         {
-            Manifest = manifest,
+            DongleManifest = dongleManifest,
+            ControllerManifest = controllerManifest,
             DonglePackage = donglePackage,
             ControllerPackage = controllerPackage,
         };
@@ -266,20 +353,25 @@ public sealed class LocalBundleReleaseSource : IReleaseSource
             ? null
             : manifest.Find(device.ControllerTarget);
         var dongleBytes = ReadEntry(archive, dongleArtifact.Asset);
-        GitHubReleaseSource.ValidateArtifactBytes(dongleArtifact, dongleBytes);
+        CloudflareR2ReleaseSource.ValidateArtifactBytes(dongleArtifact, dongleBytes);
         var donglePackage = FirmwarePackage.ParseAndVerify(dongleBytes, publicKey);
-        GitHubReleaseSource.ValidatePackageMetadata(dongleArtifact, donglePackage);
+        CloudflareR2ReleaseSource.ValidatePackageMetadata(dongleArtifact, donglePackage);
         FirmwarePackage? controllerPackage = null;
         if (controllerArtifact != null)
         {
             var controllerBytes = ReadEntry(archive, controllerArtifact.Asset);
-            GitHubReleaseSource.ValidateArtifactBytes(controllerArtifact, controllerBytes);
+            CloudflareR2ReleaseSource.ValidateArtifactBytes(controllerArtifact, controllerBytes);
             controllerPackage = FirmwarePackage.ParseAndVerify(controllerBytes, publicKey);
-            GitHubReleaseSource.ValidatePackageMetadata(controllerArtifact, controllerPackage);
+            CloudflareR2ReleaseSource.ValidatePackageMetadata(controllerArtifact, controllerPackage);
         }
-        return Task.FromResult(GitHubReleaseSource.ValidateSelection(
-            device, manifest, dongleArtifact, controllerArtifact,
-            donglePackage, controllerPackage));
+        return Task.FromResult(CloudflareR2ReleaseSource.ValidateSelection(
+            device,
+            manifest,
+            controllerArtifact == null ? null : manifest,
+            dongleArtifact,
+            controllerArtifact,
+            donglePackage,
+            controllerPackage));
     }
 
     private static byte[] ReadEntry(ZipArchive archive, string name)

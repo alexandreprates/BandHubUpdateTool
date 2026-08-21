@@ -79,7 +79,7 @@ internal sealed class MainWindow : Window
         };
         refreshButton.Clicked += async (_, _) => await RefreshAsync();
         dongles.Changed += (_, _) => ShowSelectedDevice();
-        updateButton.Clicked += async (_, _) => await RunUpdateAsync(new GitHubReleaseSource());
+        updateButton.Clicked += async (_, _) => await RunOnlineUpdateAsync();
         localButton.Clicked += async (_, _) => await RunLocalUpdateAsync();
         cancelButton.Clicked += (_, _) => operation?.Cancel();
 
@@ -146,9 +146,23 @@ internal sealed class MainWindow : Window
             : !info.SupportsControllerPackageV2
                 ? $"Controller: firmware 0x{info.ControllerFirmwareVersion:X8} requires a wired bridge update"
                 : $"Controller: {info.ControllerTarget}, firmware 0x{info.ControllerFirmwareVersion:X8}, battery " +
-                  (info.BatteryValid ? $"{info.ControllerBatteryPercent}%" : "unavailable");
+                  (info.ControllerExternallyPowered
+                      ? "absent (external power)"
+                      : info.BatteryValid ? $"{info.ControllerBatteryPercent}%" : "unavailable");
         updateButton.Sensitive = operation == null && ControllerIdentityReady(info);
         localButton.Sensitive = updateButton.Sensitive;
+    }
+
+    private async Task RunOnlineUpdateAsync()
+    {
+        try
+        {
+            await RunUpdateAsync(new CloudflareR2ReleaseSource());
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
     }
 
     private async Task RunLocalUpdateAsync()

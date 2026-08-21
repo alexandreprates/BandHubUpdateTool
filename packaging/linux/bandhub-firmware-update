@@ -1,2 +1,3 @@
 #!/usr/bin/env sh
-exec mono /usr/lib/bandhub-firmware-update/BandHub.FirmwareUpdate.exe "$@"
+application_directory="$(CDPATH= cd -- "$(dirname -- "$0")/../lib/bandhub-firmware-update" && pwd)"
+exec "$application_directory/BandHub.FirmwareUpdate" "$@"

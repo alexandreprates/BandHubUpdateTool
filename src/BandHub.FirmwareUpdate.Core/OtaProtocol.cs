@@ -77,6 +77,7 @@ public sealed class DeviceInfo
     public bool ControllerBound => (Flags & 0x01) != 0;
     public bool ControllerConnected => (Flags & 0x02) != 0;
     public bool BatteryValid => (Flags & 0x04) != 0;
+    public bool ControllerExternallyPowered => (Flags & 0x10) != 0;
     public string DongleId => BitConverter.ToString(DongleMac).Replace("-", string.Empty);
 }
 

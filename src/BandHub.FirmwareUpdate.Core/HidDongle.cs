@@ -201,6 +201,11 @@ internal sealed class HidDongleTransport : IDongleTransport
 
     private byte[] ReadFeature(byte reportId)
     {
+        if (OperatingSystem.IsLinux())
+        {
+            return LinuxHidFeatureReport.Read(
+                device.DevicePath, reportId, OtaProtocol.ReportBytes + 1);
+        }
         var buffer = new byte[Math.Max(device.GetMaxFeatureReportLength(), OtaProtocol.ReportBytes + 1)];
         buffer[0] = reportId;
         lock (sync)

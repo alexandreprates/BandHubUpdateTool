@@ -43,6 +43,7 @@ try {
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     wix build `
         FirmwareUpdate/packaging/windows/Product.wxs `
+        -arch x64 `
         -d ProductVersion=$Version `
         -d SourceDirectory=$staging `
         -o (Join-Path $OutputDirectory "BandHub-Firmware-Update-$Version.msi")

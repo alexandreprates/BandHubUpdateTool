@@ -47,7 +47,7 @@ public sealed class OtaProtocolTests
         Write32(report, 19, 0x00020000);
         Write32(report, 23, 1U << 10);
         report[27] = 72;
-        report[28] = 0x07;
+        report[28] = 0x17;
         for (var index = 0; index < 6; ++index)
         {
             report[29 + index] = (byte)(0xa0 + index);
@@ -64,6 +64,7 @@ public sealed class OtaProtocolTests
         Assert.That(info.SupportsControllerPackageV2, Is.True);
         Assert.That(info.ControllerConnected, Is.True);
         Assert.That(info.ControllerBatteryPercent, Is.EqualTo(72));
+        Assert.That(info.ControllerExternallyPowered, Is.True);
     }
 
     [Test]
