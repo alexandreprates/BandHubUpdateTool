@@ -138,6 +138,53 @@ public sealed class FirmwareUpdateServiceTests
                     Is.EqualTo(0));
     }
 
+    [Test]
+    public async Task SlowDongleReconnectReportsPhysicalRecoveryGuidance()
+    {
+        var transport = new FakeTransport(SupportedDevice());
+        var discovery = new FakeDiscovery(transport)
+        {
+            ReconnectCompletion = new TaskCompletionSource<IDongleTransport>(
+                TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var recorded = new RecordingProgress();
+        var service = new FirmwareUpdateService(discovery);
+
+        var reconnect = service.WaitForUpdatedDongleAsync(
+            transport.Descriptor.DeviceInfo!.DongleMac,
+            new UpdateProgressReporter(recorded),
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(45),
+            CancellationToken.None);
+        discovery.ReconnectCompletion.SetResult(transport);
+
+        Assert.That(await reconnect, Is.SameAs(transport));
+        Assert.That(recorded.Values, Has.Count.EqualTo(1));
+        Assert.That(recorded.Values[0].Message, Does.Contain("unplug it and reconnect it"));
+    }
+
+    [Test]
+    public void DongleReconnectTimeoutIncludesPhysicalRecoveryGuidance()
+    {
+        var transport = new FakeTransport(SupportedDevice());
+        var discovery = new FakeDiscovery(transport)
+        {
+            ReconnectError = new TimeoutException("Simulated discovery timeout."),
+        };
+        var service = new FirmwareUpdateService(discovery);
+
+        var error = Assert.ThrowsAsync<TimeoutException>(async () =>
+            await service.WaitForUpdatedDongleAsync(
+                transport.Descriptor.DeviceInfo!.DongleMac,
+                new UpdateProgressReporter(null),
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(45),
+                CancellationToken.None));
+
+        Assert.That(error?.Message, Does.Contain("Unplug it, reconnect it"));
+        Assert.That(error?.InnerException?.Message, Does.Contain("Simulated discovery timeout"));
+    }
+
     private static DongleDescriptor Descriptor(string path, byte[] mac) => new()
     {
         Path = path,
@@ -223,6 +270,9 @@ public sealed class FirmwareUpdateServiceTests
 
         public FakeDiscovery(IDongleTransport transport) => this.transport = transport;
 
+        public TaskCompletionSource<IDongleTransport>? ReconnectCompletion { get; init; }
+        public Exception? ReconnectError { get; init; }
+
         public Task<IReadOnlyList<DongleDescriptor>> DiscoverAsync(
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DongleDescriptor>>(
@@ -235,7 +285,14 @@ public sealed class FirmwareUpdateServiceTests
         public Task<IDongleTransport> WaitForMacAsync(
             byte[] mac,
             TimeSpan timeout,
-            CancellationToken cancellationToken) => Task.FromResult(transport);
+            CancellationToken cancellationToken)
+        {
+            if (ReconnectError != null)
+            {
+                return Task.FromException<IDongleTransport>(ReconnectError);
+            }
+            return ReconnectCompletion?.Task ?? Task.FromResult(transport);
+        }
     }
 
     private sealed class RejectIfLoadedReleaseSource : IReleaseSource

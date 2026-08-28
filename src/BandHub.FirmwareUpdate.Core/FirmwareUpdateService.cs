@@ -43,6 +43,8 @@ internal sealed class UpdateProgressReporter
 
 public sealed class FirmwareUpdateService
 {
+    private static readonly TimeSpan DongleReconnectGuidanceDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DongleReconnectTimeout = TimeSpan.FromSeconds(45);
     private readonly IDongleDiscovery discovery;
 
     public FirmwareUpdateService(IDongleDiscovery discovery) => this.discovery = discovery;
@@ -120,8 +122,12 @@ public sealed class FirmwareUpdateService
                 dongle.Dispose();
                 dongle = null;
                 await Task.Delay(300, cancellationToken).ConfigureAwait(false);
-                dongle = await discovery.WaitForMacAsync(
-                    originalMac, TimeSpan.FromSeconds(45), cancellationToken).ConfigureAwait(false);
+                dongle = await WaitForUpdatedDongleAsync(
+                    originalMac,
+                    reporter,
+                    DongleReconnectGuidanceDelay,
+                    DongleReconnectTimeout,
+                    cancellationToken).ConfigureAwait(false);
                 info = await dongle.ReadDeviceInfoAsync(cancellationToken).ConfigureAwait(false);
                 if (info.DongleFirmwareVersion != release.DonglePackage.FirmwareVersion)
                 {
@@ -162,6 +168,44 @@ public sealed class FirmwareUpdateService
         finally
         {
             dongle?.Dispose();
+        }
+    }
+
+    internal async Task<IDongleTransport> WaitForUpdatedDongleAsync(
+        byte[] mac,
+        UpdateProgressReporter progress,
+        TimeSpan guidanceDelay,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var reconnectTask = discovery.WaitForMacAsync(mac, timeout, cancellationToken);
+        using var guidanceCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var guidanceTask = Task.Delay(guidanceDelay, guidanceCancellation.Token);
+        if (await Task.WhenAny(reconnectTask, guidanceTask).ConfigureAwait(false) == guidanceTask &&
+            !guidanceTask.IsCanceled)
+        {
+            progress.Report(
+                "dongle",
+                96,
+                "The Dongle is taking longer than expected to reconnect. " +
+                "If it remains in programming mode, unplug it and reconnect it.");
+        }
+
+        try
+        {
+            return await reconnectTask.ConfigureAwait(false);
+        }
+        catch (TimeoutException error)
+        {
+            throw new TimeoutException(
+                "The updated Dongle did not reconnect over USB. " +
+                "Unplug it, reconnect it, and retry the update.",
+                error);
+        }
+        finally
+        {
+            guidanceCancellation.Cancel();
         }
     }
 
