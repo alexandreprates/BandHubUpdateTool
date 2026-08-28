@@ -107,4 +107,6 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        run: >-
+          gh release upload "${{ github.event.release.tag_name }}" dist/*
+          --repo "${{ github.repository }}" --clobber
