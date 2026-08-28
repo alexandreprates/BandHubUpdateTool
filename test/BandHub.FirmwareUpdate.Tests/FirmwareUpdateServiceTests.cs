@@ -65,7 +65,11 @@ public sealed class FirmwareUpdateServiceTests
 
         var error = Assert.ThrowsAsync<NotSupportedException>(async () =>
             await service.UpdateAllAsync(
-                transport.Descriptor, release, null, CancellationToken.None));
+                transport.Descriptor,
+                release,
+                _ => Task.FromResult(true),
+                null,
+                CancellationToken.None));
 
         Assert.That(error?.Message, Does.Contain("wired bridge update"));
         Assert.That(release.Loaded, Is.False);
@@ -113,7 +117,11 @@ public sealed class FirmwareUpdateServiceTests
 
         Assert.ThrowsAsync<ExpectedStopException>(async () =>
             await service.UpdateAllAsync(
-                transport.Descriptor, release, null, CancellationToken.None));
+                transport.Descriptor,
+                release,
+                _ => Task.FromResult(true),
+                null,
+                CancellationToken.None));
 
         Assert.That(release.Device, Is.SameAs(reconnected));
         Assert.That(transport.Commands, Has.Count.EqualTo(1));
@@ -136,6 +144,94 @@ public sealed class FirmwareUpdateServiceTests
                     Is.EqualTo(1));
         Assert.That(DongleDescriptorSelection.FindByMac(reordered, secondMac),
                     Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task ConfirmationRefreshesDeviceStateAfterDownload()
+    {
+        var initial = SupportedDevice(controllerBatteryPercent: 80);
+        var refreshed = SupportedDevice(controllerBatteryPercent: 75);
+        var transport = new FakeTransport(initial);
+        transport.NextDeviceInfos.Enqueue(refreshed);
+        await transport.ReadDeviceInfoAsync(CancellationToken.None);
+        var recorded = new RecordingProgress();
+        var confirmationCalled = false;
+
+        var result = await FirmwareUpdateService.ConfirmDevicesReadyAndRefreshAsync(
+            transport,
+            FirmwareTarget.DongleZeroPc,
+            FirmwareTarget.ControllerGh3,
+            _ =>
+            {
+                confirmationCalled = true;
+                Assert.That(transport.DeviceInfoReadCount, Is.EqualTo(1));
+                return Task.FromResult(true);
+            },
+            new UpdateProgressReporter(recorded),
+            CancellationToken.None);
+
+        Assert.That(confirmationCalled, Is.True);
+        Assert.That(result, Is.SameAs(refreshed));
+        Assert.That(transport.DeviceInfoReadCount, Is.EqualTo(2));
+        Assert.That(recorded.Values[0].Message, Does.Contain("download completed"));
+        Assert.That(recorded.Values[^1].Message, Does.Contain("readiness confirmed"));
+    }
+
+    [Test]
+    public void DeclinedConfirmationCancelsBeforeRefreshingDeviceState()
+    {
+        var transport = new FakeTransport(SupportedDevice());
+        transport.ReadDeviceInfoAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await FirmwareUpdateService.ConfirmDevicesReadyAndRefreshAsync(
+                transport,
+                FirmwareTarget.DongleZeroPc,
+                FirmwareTarget.ControllerGh3,
+                _ => Task.FromResult(false),
+                new UpdateProgressReporter(null),
+                CancellationToken.None));
+
+        Assert.That(transport.DeviceInfoReadCount, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void ConfirmationRejectsControllerDisconnectedDuringDownload()
+    {
+        var transport = new FakeTransport(SupportedDevice());
+        transport.NextDeviceInfos.Enqueue(SupportedDevice(flags: 0x05));
+        transport.ReadDeviceInfoAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        var error = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await FirmwareUpdateService.ConfirmDevicesReadyAndRefreshAsync(
+                transport,
+                FirmwareTarget.DongleZeroPc,
+                FirmwareTarget.ControllerGh3,
+                _ => Task.FromResult(true),
+                new UpdateProgressReporter(null),
+                CancellationToken.None));
+
+        Assert.That(error?.Message, Does.Contain("paired Controller must be connected"));
+    }
+
+    [Test]
+    public void ConfirmationRejectsControllerTargetChangedDuringDownload()
+    {
+        var transport = new FakeTransport(SupportedDevice());
+        transport.NextDeviceInfos.Enqueue(SupportedDevice(
+            controllerTarget: FirmwareTarget.ControllerGh5));
+        transport.ReadDeviceInfoAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        var error = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await FirmwareUpdateService.ConfirmDevicesReadyAndRefreshAsync(
+                transport,
+                FirmwareTarget.DongleZeroPc,
+                FirmwareTarget.ControllerGh3,
+                _ => Task.FromResult(true),
+                new UpdateProgressReporter(null),
+                CancellationToken.None));
+
+        Assert.That(error?.Message, Does.Contain("device selection changed"));
     }
 
     [Test]
@@ -197,13 +293,15 @@ public sealed class FirmwareUpdateServiceTests
         uint controllerFeatures = (1U << 7) | (1U << 10),
         byte[]? dongleMac = null,
         byte flags = 0x07,
-        byte controllerBatteryPercent = 80) => new()
+        byte controllerBatteryPercent = 80,
+        FirmwareTarget dongleTarget = FirmwareTarget.DongleZeroPc,
+        FirmwareTarget controllerTarget = FirmwareTarget.ControllerGh3) => new()
     {
         Capabilities = 0x03,
         UsbProfile = 1,
-        DongleTarget = FirmwareTarget.DongleZeroPc,
+        DongleTarget = dongleTarget,
         DongleFirmwareVersion = 0x00020000,
-        ControllerTarget = FirmwareTarget.ControllerGh3,
+        ControllerTarget = controllerTarget,
         ControllerFirmwareVersion = 0x00020000,
         ControllerFeatureFlags = controllerFeatures,
         ControllerBatteryPercent = controllerBatteryPercent,
@@ -221,7 +319,6 @@ public sealed class FirmwareUpdateServiceTests
     private sealed class FakeTransport : IDongleTransport
     {
         private DeviceInfo info;
-        private bool deviceInfoRead;
 
         public FakeTransport(DeviceInfo info)
         {
@@ -239,14 +336,15 @@ public sealed class FirmwareUpdateServiceTests
         public Queue<OtaStatus> Statuses { get; } = new();
         public Queue<DeviceInfo> NextDeviceInfos { get; } = new();
         public List<byte[]> Commands { get; } = new();
+        public int DeviceInfoReadCount { get; private set; }
 
         public Task<DeviceInfo> ReadDeviceInfoAsync(CancellationToken cancellationToken)
         {
-            if (deviceInfoRead && NextDeviceInfos.Count != 0)
+            if (DeviceInfoReadCount != 0 && NextDeviceInfos.Count != 0)
             {
                 info = NextDeviceInfos.Dequeue();
             }
-            deviceInfoRead = true;
+            ++DeviceInfoReadCount;
             return Task.FromResult(info);
         }
 

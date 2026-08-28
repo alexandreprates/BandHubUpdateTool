@@ -22,9 +22,15 @@ the public domain configured for the Cloudflare R2 bucket
 `controller/<release-version>/` and `dongle/<release-version>/`. Each component
 has its own `release.json` and `release.json.sig` at the component root.
 
-The application performs an Update All transaction: it stages the Controller
-package without starting it, updates and validates the Dongle, reconnects to
-the same Dongle MAC, and only then arms the Controller update.
+After downloading and verifying the selected packages, the application pauses
+before writing firmware and asks the user to confirm that the Dongle remains
+connected and that the paired Controller is powered on and connected. It then
+refreshes the live device information and rejects a disconnected Controller or
+a hardware-target change before continuing.
+
+The application performs the remaining Update All transaction by staging the
+Controller package without starting it, updating and validating the Dongle,
+reconnecting to the same Dongle MAC, and only then arming the Controller update.
 
 ## Packaging
 

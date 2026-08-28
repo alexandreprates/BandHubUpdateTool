@@ -201,7 +201,11 @@ internal sealed class MainWindow : Window
         try
         {
             await updateService.UpdateAllAsync(
-                descriptor, source, reporter, operation.Token);
+                descriptor,
+                source,
+                ConfirmDevicesReadyAsync,
+                reporter,
+                operation.Token);
             await RefreshAfterOperationAsync();
         }
         catch (OperationCanceledException)
@@ -223,6 +227,47 @@ internal sealed class MainWindow : Window
             SetBusy(false, "Idle");
             ShowSelectedDevice();
         }
+    }
+
+    private Task<bool> ConfirmDevicesReadyAsync(CancellationToken cancellationToken)
+    {
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Application.Invoke(delegate
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetCanceled(cancellationToken);
+                return;
+            }
+
+            try
+            {
+                using var dialog = new MessageDialog(
+                    this,
+                    DialogFlags.Modal,
+                    MessageType.Question,
+                    ButtonsType.None,
+                    "Firmware download completed.");
+                dialog.Title = "Ready to install firmware";
+                dialog.SecondaryText =
+                    "Before continuing, make sure:\n\n" +
+                    "• The Controller is powered on.\n" +
+                    "• The Controller is paired and connected to the Dongle.\n" +
+                    "• The Dongle remains connected to this computer.\n\n" +
+                    "Continue with firmware installation?";
+                dialog.AddButton("Cancel", ResponseType.Cancel);
+                dialog.AddButton("Continue", ResponseType.Accept);
+                dialog.DefaultResponse = ResponseType.Accept;
+                var response = (ResponseType)dialog.Run();
+                completion.TrySetResult(response == ResponseType.Accept);
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
+            }
+        });
+        return completion.Task;
     }
 
     private async Task RefreshAfterOperationAsync()

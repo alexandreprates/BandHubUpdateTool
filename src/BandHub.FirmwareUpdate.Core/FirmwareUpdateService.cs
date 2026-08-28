@@ -52,10 +52,12 @@ public sealed class FirmwareUpdateService
     public async Task UpdateAllAsync(
         DongleDescriptor descriptor,
         IReleaseSource releaseSource,
+        Func<CancellationToken, Task<bool>> confirmDevicesReadyAsync,
         IProgress<UpdateProgress>? progress,
         CancellationToken cancellationToken)
     {
         var reporter = new UpdateProgressReporter(progress);
+        ArgumentNullException.ThrowIfNull(confirmDevicesReadyAsync);
         if (!descriptor.Supported)
         {
             throw new NotSupportedException(descriptor.UnsupportedReason);
@@ -86,6 +88,23 @@ public sealed class FirmwareUpdateService
                                    release.ControllerPackage.FirmwareVersion >
                                    info.ControllerFirmwareVersion;
             var updateDongle = release.DonglePackage.FirmwareVersion > info.DongleFirmwareVersion;
+            if (!updateController && !updateDongle)
+            {
+                reporter.Report("complete", 100, "The Dongle and Controller are up to date.");
+                return;
+            }
+
+            info = await ConfirmDevicesReadyAndRefreshAsync(
+                dongle,
+                release.DonglePackage.Target,
+                release.ControllerPackage?.Target ?? info.ControllerTarget,
+                confirmDevicesReadyAsync,
+                reporter,
+                cancellationToken).ConfigureAwait(false);
+            updateController = release.ControllerPackage != null &&
+                               release.ControllerPackage.FirmwareVersion >
+                               info.ControllerFirmwareVersion;
+            updateDongle = release.DonglePackage.FirmwareVersion > info.DongleFirmwareVersion;
             if (!updateController && !updateDongle)
             {
                 reporter.Report("complete", 100, "The Dongle and Controller are up to date.");
@@ -169,6 +188,43 @@ public sealed class FirmwareUpdateService
         {
             dongle?.Dispose();
         }
+    }
+
+    internal static async Task<DeviceInfo> ConfirmDevicesReadyAndRefreshAsync(
+        IDongleTransport dongle,
+        FirmwareTarget expectedDongleTarget,
+        FirmwareTarget expectedControllerTarget,
+        Func<CancellationToken, Task<bool>> confirmDevicesReadyAsync,
+        UpdateProgressReporter progress,
+        CancellationToken cancellationToken)
+    {
+        progress.Report(
+            "confirmation",
+            100,
+            "Firmware download completed and packages verified. " +
+            "Waiting for device readiness confirmation...");
+        if (!await confirmDevicesReadyAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new OperationCanceledException(
+                "Firmware installation was cancelled at device readiness confirmation.",
+                cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var refreshed = await dongle.ReadDeviceInfoAsync(cancellationToken)
+            .ConfigureAwait(false);
+        ValidateDevice(refreshed);
+        ValidateControllerIdentity(refreshed);
+        if (refreshed.DongleTarget != expectedDongleTarget ||
+            refreshed.ControllerTarget != expectedControllerTarget)
+        {
+            throw new InvalidOperationException(
+                "The paired device selection changed while firmware was downloading. " +
+                "Restart the update to download the correct packages.");
+        }
+        progress.Report(
+            "confirmation", 100, "Dongle and Controller readiness confirmed.");
+        return refreshed;
     }
 
     internal async Task<IDongleTransport> WaitForUpdatedDongleAsync(
