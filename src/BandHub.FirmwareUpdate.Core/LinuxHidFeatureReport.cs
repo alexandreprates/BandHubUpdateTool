@@ -60,7 +60,7 @@ internal static class LinuxHidFeatureReport
             throw new InvalidOperationException(
                 $"Unexpected Linux HID device path: {hidDevicePath}");
         }
-        return Path.Combine("/dev", name);
+        return $"/dev/{name}";
     }
 
     [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
