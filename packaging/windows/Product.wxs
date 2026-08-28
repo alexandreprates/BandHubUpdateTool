@@ -6,6 +6,8 @@
            Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer BandHub Firmware Update is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="BandHubFirmwareUpdate.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="BandHubFirmwareUpdate.ico" />
 
     <StandardDirectory Id="ProgramFilesFolder">
       <Directory Id="BANDHUBFOLDER" Name="BandHub">
@@ -14,6 +16,7 @@
             <Shortcut Id="StartMenuShortcut"
                       Directory="ProgramMenuFolder"
                       Name="BandHub Firmware Update"
+                      Icon="BandHubFirmwareUpdate.ico"
                       Target="[INSTALLFOLDER]BandHub.FirmwareUpdate.exe"
                       WorkingDirectory="INSTALLFOLDER" />
             <RegistryValue Root="HKLM"

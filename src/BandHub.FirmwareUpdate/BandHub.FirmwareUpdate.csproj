@@ -3,11 +3,17 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <UseAppHost>true</UseAppHost>
+    <ApplicationIcon>../../icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="GtkSharp" Version="3.24.24.95" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../BandHub.FirmwareUpdate.Core/BandHub.FirmwareUpdate.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../icon.png" Link="icon.png">
+      <LogicalName>BandHub.FirmwareUpdate.icon.png</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

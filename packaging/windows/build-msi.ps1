@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("bandhub-msi-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $staging | Out-Null
 try {
@@ -40,11 +41,15 @@ try {
         $loaderCache,
         $utf8WithoutBom)
 
+    $iconPath = Join-Path $repositoryRoot "icon.ico"
+    $productDefinition = Join-Path $PSScriptRoot "Product.wxs"
+    $productVersion = ($Version -split "[-+]")[0]
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     wix build `
-        FirmwareUpdate/packaging/windows/Product.wxs `
+        $productDefinition `
         -arch x64 `
-        -d ProductVersion=$Version `
+        -d IconPath=$iconPath `
+        -d ProductVersion=$productVersion `
         -d SourceDirectory=$staging `
         -o (Join-Path $OutputDirectory "BandHub-Firmware-Update-$Version.msi")
 }

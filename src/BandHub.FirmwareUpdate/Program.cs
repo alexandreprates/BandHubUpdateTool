@@ -7,12 +7,15 @@ namespace BandHub.FirmwareUpdate;
 
 internal static class Program
 {
+    private const string ApplicationIconResource = "BandHub.FirmwareUpdate.icon.png";
+
     [STAThread]
     private static void Main()
     {
         ConfigureBundledGtkRuntime();
         Application.Init();
-        using var window = new MainWindow();
+        using var icon = new Gdk.Pixbuf(typeof(Program).Assembly, ApplicationIconResource);
+        using var window = new MainWindow { Icon = icon };
         window.ShowAll();
         Application.Run();
     }

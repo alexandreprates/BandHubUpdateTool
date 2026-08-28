@@ -12,16 +12,29 @@ using System.Threading;
 using System.Threading.Tasks;
 using BandHub.FirmwareUpdate.Core;
 using NUnit.Framework;
-using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Asn1.X9;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Signers;
-using Org.BouncyCastle.OpenSsl;
+using Org.BouncyCastle.Math;
 
 namespace BandHub.FirmwareUpdate.Tests;
 
 [TestFixture]
 public sealed class ReleaseSourceTests
 {
+    private static readonly X9ECParameters FixtureCurve =
+        ECNamedCurveTable.GetByName("secp256r1");
+    private static readonly ECDomainParameters FixtureDomain = new(
+        FixtureCurve.Curve,
+        FixtureCurve.G,
+        FixtureCurve.N,
+        FixtureCurve.H,
+        FixtureCurve.GetSeed());
+    private static readonly ECPrivateKeyParameters FixtureSigningKey =
+        new(BigInteger.One, FixtureDomain);
+    private static readonly byte[] FixturePublicKey =
+        FixtureCurve.G.Multiply(BigInteger.One).Normalize().GetEncoded(false);
+
     [Test]
     public void CloudflareR2SourceEmbedsProductionPublicDomain()
     {
@@ -39,7 +52,7 @@ public sealed class ReleaseSourceTests
         var path = CreateBundle(FirmwareTarget.ControllerGh3);
         try
         {
-            var selection = await new LocalBundleReleaseSource(path).LoadAsync(
+            var selection = await new LocalBundleReleaseSource(path, FixturePublicKey).LoadAsync(
                 SupportedDevice(), CancellationToken.None);
 
             Assert.That(selection.DonglePackage.Target, Is.EqualTo(FirmwareTarget.DongleZeroPc));
@@ -59,7 +72,7 @@ public sealed class ReleaseSourceTests
         var path = CreateBundle(FirmwareTarget.ControllerGh3, versionedPaths: false);
         try
         {
-            var selection = await new LocalBundleReleaseSource(path).LoadAsync(
+            var selection = await new LocalBundleReleaseSource(path, FixturePublicKey).LoadAsync(
                 SupportedDevice(), CancellationToken.None);
 
             Assert.That(selection.DonglePackage.Target, Is.EqualTo(FirmwareTarget.DongleZeroPc));
@@ -78,7 +91,7 @@ public sealed class ReleaseSourceTests
         try
         {
             Assert.ThrowsAsync<InvalidDataException>(async () =>
-                await new LocalBundleReleaseSource(path).LoadAsync(
+                await new LocalBundleReleaseSource(path, FixturePublicKey).LoadAsync(
                     SupportedDevice(), CancellationToken.None));
         }
         finally
@@ -109,7 +122,7 @@ public sealed class ReleaseSourceTests
         };
         var handler = new StaticResponseHandler(responses);
         using var source = new CloudflareR2ReleaseSource(
-            new HttpClient(handler), baseUrl.TrimEnd('/'));
+            new HttpClient(handler), baseUrl.TrimEnd('/'), FixturePublicKey);
 
         var selection = await source.LoadAsync(SupportedDevice(), CancellationToken.None);
 
@@ -283,37 +296,13 @@ public sealed class ReleaseSourceTests
 
     private static byte[] Sign(byte[] payload)
     {
-        using var reader = new StreamReader(FindPrivateKey());
-        var keyObject = new PemReader(reader).ReadObject();
-        var privateKey = keyObject switch
-        {
-            AsymmetricCipherKeyPair pair => (ECPrivateKeyParameters)pair.Private,
-            ECPrivateKeyParameters key => key,
-            _ => throw new InvalidDataException("Repository release private key is invalid."),
-        };
         var signer = new ECDsaSigner();
-        signer.Init(true, privateKey);
+        signer.Init(true, FixtureSigningKey);
         var components = signer.GenerateSignature(SHA256.HashData(payload));
         var signature = new byte[64];
         CopyComponent(components[0].ToByteArrayUnsigned(), signature, 0);
         CopyComponent(components[1].ToByteArrayUnsigned(), signature, 32);
         return signature;
-    }
-
-    private static string FindPrivateKey()
-    {
-        for (var directory = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-             directory != null;
-             directory = directory.Parent)
-        {
-            var candidate = Path.Combine(
-                directory.FullName, "pki", "controller-ota-private.pem");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-        throw new FileNotFoundException("Repository release private key was not found.");
     }
 
     private static void CopyComponent(byte[] component, byte[] output, int offset)

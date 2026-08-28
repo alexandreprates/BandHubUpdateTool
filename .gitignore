@@ -1,0 +1,7 @@
+.tmp/
+.serena/
+**/bin/
+**/obj/
+**/__pycache__/
+*.user
+*.suo

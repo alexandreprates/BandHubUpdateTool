@@ -165,10 +165,19 @@ public sealed class CloudflareR2ReleaseSource : IReleaseSource, IDisposable
     private readonly byte[] publicKey;
 
     public CloudflareR2ReleaseSource(HttpClient? client = null, string? baseUrl = null)
+        : this(client, baseUrl, FirmwarePackage.LoadEmbeddedPublicKey())
+    {
+    }
+
+    internal CloudflareR2ReleaseSource(
+        HttpClient? client,
+        string? baseUrl,
+        byte[] publicKey)
     {
         this.client = client ?? new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
         baseUri = ResolveBaseUri(baseUrl);
-        publicKey = FirmwarePackage.LoadEmbeddedPublicKey();
+        this.publicKey = publicKey?.ToArray()
+            ?? throw new ArgumentNullException(nameof(publicKey));
     }
 
     public async Task<ReleaseSelection> LoadAsync(
@@ -337,9 +346,19 @@ public sealed class CloudflareR2ReleaseSource : IReleaseSource, IDisposable
 public sealed class LocalBundleReleaseSource : IReleaseSource
 {
     private readonly string path;
-    private readonly byte[] publicKey = FirmwarePackage.LoadEmbeddedPublicKey();
+    private readonly byte[] publicKey;
 
-    public LocalBundleReleaseSource(string path) => this.path = path;
+    public LocalBundleReleaseSource(string path)
+        : this(path, FirmwarePackage.LoadEmbeddedPublicKey())
+    {
+    }
+
+    internal LocalBundleReleaseSource(string path, byte[] publicKey)
+    {
+        this.path = path;
+        this.publicKey = publicKey?.ToArray()
+            ?? throw new ArgumentNullException(nameof(publicKey));
+    }
 
     public Task<ReleaseSelection> LoadAsync(DeviceInfo device, CancellationToken cancellationToken)
     {

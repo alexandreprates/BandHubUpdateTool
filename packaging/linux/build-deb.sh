@@ -10,6 +10,8 @@ version="$1"
 architecture="$2"
 publish_directory="$(realpath "$3")"
 output_directory="$(realpath -m "$4")"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repository_root="$(realpath "$script_directory/../..")"
 case "$architecture" in
   amd64|arm64) ;;
   *)
@@ -29,17 +31,20 @@ install -d "$package_root/DEBIAN"
 install -d "$package_root/usr/lib/bandhub-firmware-update"
 install -d "$package_root/usr/bin"
 install -d "$package_root/usr/share/applications"
+install -d "$package_root/usr/share/pixmaps"
 install -d "$package_root/lib/udev/rules.d"
 cp -a "$publish_directory/." "$package_root/usr/lib/bandhub-firmware-update/"
-install -m 0644 FirmwareUpdate/packaging/linux/bandhub-firmware-update.desktop \
+install -m 0644 "$script_directory/bandhub-firmware-update.desktop" \
   "$package_root/usr/share/applications/"
-install -m 0644 FirmwareUpdate/packaging/linux/99-bandhub-dongle.rules \
+install -m 0644 "$repository_root/icon.png" \
+  "$package_root/usr/share/pixmaps/bandhub-firmware-update.png"
+install -m 0644 "$script_directory/99-bandhub-dongle.rules" \
   "$package_root/lib/udev/rules.d/"
-install -m 0755 FirmwareUpdate/packaging/linux/bandhub-firmware-update \
+install -m 0755 "$script_directory/bandhub-firmware-update" \
   "$package_root/usr/bin/"
 sed -e "s/@VERSION@/$version/g" \
     -e "s/@ARCHITECTURE@/$architecture/g" \
-    FirmwareUpdate/packaging/linux/control \
+    "$script_directory/control" \
   > "$package_root/DEBIAN/control"
 
 mkdir -p "$output_directory"

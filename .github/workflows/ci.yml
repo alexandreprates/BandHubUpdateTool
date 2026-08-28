@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore
+        run: dotnet restore BandHub.FirmwareUpdate.sln
+      - name: Build
+        run: dotnet build BandHub.FirmwareUpdate.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test test/BandHub.FirmwareUpdate.Tests -c Release --no-build
+      - name: Validate icon integration
+        run: python3 test/test_packaging_icons.py
+      - name: Publish Linux application
+        run: >-
+          dotnet publish src/BandHub.FirmwareUpdate -c Release
+          -r linux-x64 --self-contained true -o .tmp/updater-linux
+      - name: Build Linux package
+        run: packaging/linux/build-deb.sh 0.0.0-ci amd64 .tmp/updater-linux .tmp/installers
+      - name: Install package dependencies and test package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ./.tmp/installers/bandhub-firmware-update_0.0.0-ci_amd64.deb
+          python3 test/run_linux_runtime_smoke.py /usr/bin/bandhub-firmware-update
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gtk3
+      - name: Restore
+        run: dotnet restore BandHub.FirmwareUpdate.sln
+      - name: Build and test
+        run: |
+          dotnet build BandHub.FirmwareUpdate.sln -c Release --no-restore
+          dotnet test test/BandHub.FirmwareUpdate.Tests -c Release --no-build
+      - name: Publish Windows application
+        run: >-
+          dotnet publish src/BandHub.FirmwareUpdate -c Release
+          -r win-x64 --self-contained true -o .tmp/updater-windows
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build Windows installer
+        shell: pwsh
+        run: >-
+          ./packaging/windows/build-msi.ps1
+          -Version 0.0.0
+          -PublishDirectory .tmp/updater-windows
+          -GtkRuntimeDirectory C:\msys64\mingw64
+          -OutputDirectory .tmp/installers
