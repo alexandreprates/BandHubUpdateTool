@@ -11,6 +11,12 @@ public enum FirmwareTarget : uint
     DongleZeroPc = 0x0202,
 }
 
+public enum UsbProfile : byte
+{
+    PcHid = 1,
+    Ps3RockBandGuitar = 2,
+}
+
 public enum OtaCommand : byte
 {
     Begin = 1,
@@ -23,6 +29,7 @@ public enum OtaCommand : byte
     BeginDongle = 8,
     CommitDongle = 9,
     CancelController = 10,
+    SetUsbProfile = 11,
 }
 
 public enum OtaState : byte
@@ -72,6 +79,7 @@ public sealed class DeviceInfo
 
     public bool SupportsControllerOta => (Capabilities & 0x01) != 0;
     public bool SupportsDongleSelfOta => (Capabilities & 0x02) != 0;
+    public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
     public bool SupportsControllerPackageV2 =>
         (ControllerFeatureFlags & ControllerPackageV2Feature) != 0;
     public bool ControllerBound => (Flags & 0x01) != 0;
@@ -83,6 +91,11 @@ public sealed class DeviceInfo
 
 public static class OtaProtocol
 {
+    private static readonly byte[] Ps3ReturnToPcPayload =
+    {
+        0x42, 0x48, 0x55, 0x53, 0x42, 0x50, 0x43, 0x01,
+    };
+
     public const ushort VendorId = 0x1209;
     public const ushort ProductId = 0x2882;
     public const ushort Ps3VendorId = 0x12ba;
@@ -92,6 +105,34 @@ public static class OtaProtocol
     public const byte DeviceInfoReportId = 0x22;
     public const int ReportBytes = 63;
     public const int CommandDataBytes = 44;
+
+    public static byte[] EncodePs3ReturnToPcOutput(int outputReportLength)
+    {
+        if (outputReportLength < Ps3ReturnToPcPayload.Length + 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(outputReportLength));
+        }
+        var output = new byte[outputReportLength];
+        output[0] = 0;
+        Buffer.BlockCopy(Ps3ReturnToPcPayload, 0, output, 1, Ps3ReturnToPcPayload.Length);
+        return output;
+    }
+
+    public static byte[] EncodeUsbProfileCommand(uint sessionId, UsbProfile profile)
+    {
+        if (sessionId == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sessionId));
+        }
+        if (profile != UsbProfile.PcHid && profile != UsbProfile.Ps3RockBandGuitar)
+        {
+            throw new ArgumentOutOfRangeException(nameof(profile));
+        }
+        return EncodeCommand(
+            OtaCommand.SetUsbProfile,
+            sessionId,
+            data: new[] { (byte)profile });
+    }
 
     public static byte[] EncodeCommand(
         OtaCommand command,

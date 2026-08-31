@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using HidSharp;
@@ -14,6 +15,9 @@ public sealed class DongleDescriptor
     public bool Supported { get; init; }
     public string UnsupportedReason { get; init; } = string.Empty;
     public DeviceInfo? DeviceInfo { get; init; }
+    public UsbProfile UsbProfile { get; init; }
+    public string SerialNumber { get; init; } = string.Empty;
+    public bool CanSwitchUsbProfile { get; init; }
 }
 
 public static class DongleDescriptorSelection
@@ -34,6 +38,27 @@ public static class DongleDescriptorSelection
             }
         }
         return -1;
+    }
+
+    public static int FindByIdentity(
+        IReadOnlyList<DongleDescriptor> descriptors,
+        string? serialNumber,
+        byte[]? mac)
+    {
+        if (!string.IsNullOrWhiteSpace(serialNumber))
+        {
+            for (var index = 0; index < descriptors.Count; ++index)
+            {
+                if (string.Equals(
+                        descriptors[index].SerialNumber,
+                        serialNumber,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return index;
+                }
+            }
+        }
+        return FindByMac(descriptors, mac);
     }
 }
 
@@ -64,19 +89,28 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         foreach (var device in DeviceList.Local.GetHidDevices(OtaProtocol.VendorId, OtaProtocol.ProductId))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var serialNumber = ReadSerialNumber(device);
             try
             {
                 using var transport = OpenDevice(device);
                 var info = transport.ReadDeviceInfoAsync(cancellationToken).GetAwaiter().GetResult();
+                var profile = ParseUsbProfile(info.UsbProfile);
                 results.Add(new DongleDescriptor
                 {
                     Path = device.DevicePath,
                     DisplayName = $"BandHub Dongle {FormatMac(info.DongleMac)}",
-                    Supported = info.UsbProfile == 1 && info.SupportsDongleSelfOta,
-                    UnsupportedReason = info.SupportsDongleSelfOta
-                        ? string.Empty
-                        : "The installed firmware does not contain the self-OTA agent.",
+                    Supported = profile == UsbProfile.PcHid && info.SupportsDongleSelfOta,
+                    UnsupportedReason = profile == 0
+                        ? "The installed firmware reported an unrecognized USB profile."
+                        : !info.SupportsDongleSelfOta
+                            ? "The installed firmware does not contain the self-OTA agent."
+                            : profile != UsbProfile.PcHid
+                                ? "Switch this Dongle to the PC HID profile before installing firmware updates."
+                                : string.Empty,
                     DeviceInfo = info,
+                    UsbProfile = profile,
+                    SerialNumber = serialNumber,
+                    CanSwitchUsbProfile = info.SupportsUsbProfileSwitch,
                 });
             }
             catch (Exception error) when (error is not OperationCanceledException)
@@ -87,6 +121,8 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                     DisplayName = "BandHub Dongle (legacy firmware)",
                     Supported = false,
                     UnsupportedReason = error.Message,
+                    UsbProfile = UsbProfile.PcHid,
+                    SerialNumber = serialNumber,
                 });
             }
         }
@@ -94,12 +130,19 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         foreach (var device in DeviceList.Local.GetHidDevices(
                      OtaProtocol.Ps3VendorId, OtaProtocol.Ps3ProductId))
         {
+            var serialNumber = ReadSerialNumber(device);
             results.Add(new DongleDescriptor
             {
                 Path = device.DevicePath,
-                DisplayName = "BandHub PS3 Rock Band Guitar Dongle",
+                DisplayName = string.IsNullOrWhiteSpace(serialNumber)
+                    ? "BandHub PS3 Rock Band Guitar Dongle"
+                    : $"BandHub PS3 Rock Band Guitar Dongle {serialNumber}",
                 Supported = false,
-                UnsupportedReason = "PS3 USB profiles are not supported by updater version 1.",
+                UnsupportedReason =
+                    "Switch this Dongle to the PC HID profile before installing firmware updates.",
+                UsbProfile = UsbProfile.Ps3RockBandGuitar,
+                SerialNumber = serialNumber,
+                CanSwitchUsbProfile = true,
             });
         }
         return results;
@@ -136,6 +179,71 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         throw new TimeoutException("The updated Dongle did not reconnect over USB.");
     }
 
+    public async Task<DongleDescriptor> SwitchUsbProfileAsync(
+        DongleDescriptor descriptor,
+        UsbProfile targetProfile,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        if (targetProfile != UsbProfile.PcHid &&
+            targetProfile != UsbProfile.Ps3RockBandGuitar)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetProfile));
+        }
+        if (descriptor.UsbProfile == targetProfile)
+        {
+            return descriptor;
+        }
+        if (!descriptor.CanSwitchUsbProfile)
+        {
+            throw new NotSupportedException(
+                "The installed Dongle firmware does not support USB profile selection.");
+        }
+        if (string.IsNullOrWhiteSpace(descriptor.SerialNumber))
+        {
+            throw new InvalidOperationException(
+                "The Dongle USB serial could not be read, so it cannot be followed safely " +
+                "across a profile change. Reconnect it and refresh the device list.");
+        }
+
+        if (descriptor.UsbProfile == UsbProfile.PcHid)
+        {
+            if (targetProfile != UsbProfile.Ps3RockBandGuitar)
+            {
+                throw new NotSupportedException("The requested USB profile transition is invalid.");
+            }
+            using (var transport = await OpenAsync(descriptor.Path, cancellationToken)
+                       .ConfigureAwait(false))
+            {
+                var sessionId = (uint)RandomNumberGenerator.GetInt32(1, int.MaxValue);
+                await transport.SendCommandAsync(
+                    OtaProtocol.EncodeUsbProfileCommand(sessionId, targetProfile),
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else if (descriptor.UsbProfile == UsbProfile.Ps3RockBandGuitar)
+        {
+            if (targetProfile != UsbProfile.PcHid)
+            {
+                throw new NotSupportedException("The requested USB profile transition is invalid.");
+            }
+            await SendPs3ReturnToPcAsync(descriptor.Path, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            throw new NotSupportedException("The current USB profile is not recognized.");
+        }
+
+        return await WaitForProfileAsync(
+            descriptor.SerialNumber,
+            descriptor.DeviceInfo?.DongleMac,
+            targetProfile,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private static HidDongleTransport OpenDevice(HidDevice device)
     {
         if (!device.TryOpen(out HidStream stream))
@@ -146,6 +254,73 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         stream.ReadTimeout = 2000;
         stream.WriteTimeout = 2000;
         return new HidDongleTransport(device, stream);
+    }
+
+    private async Task<DongleDescriptor> WaitForProfileAsync(
+        string serialNumber,
+        byte[]? mac,
+        UsbProfile targetProfile,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var descriptors = await DiscoverAsync(cancellationToken).ConfigureAwait(false);
+            var candidates = descriptors.Where(item => item.UsbProfile == targetProfile).ToList();
+            var selected = DongleDescriptorSelection.FindByIdentity(
+                candidates, serialNumber, mac);
+            if (selected >= 0)
+            {
+                return candidates[selected];
+            }
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+        }
+        throw new TimeoutException(
+            "The Dongle did not reconnect with the requested USB profile. " +
+            "Unplug it, reconnect it, and try again.");
+    }
+
+    private static Task SendPs3ReturnToPcAsync(
+        string path,
+        CancellationToken cancellationToken) => Task.Run(() =>
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var device = DeviceList.Local.GetHidDevices().FirstOrDefault(
+            item => item.DevicePath == path)
+            ?? throw new InvalidOperationException(
+                "The selected Dongle is no longer connected.");
+        if (!device.TryOpen(out HidStream stream))
+        {
+            throw new InvalidOperationException(
+                "Unable to open the Dongle HID interface. Check permissions and other applications.");
+        }
+        using (stream)
+        {
+            stream.WriteTimeout = 2000;
+            var outputLength = Math.Max(device.GetMaxOutputReportLength(), 9);
+            stream.Write(OtaProtocol.EncodePs3ReturnToPcOutput(outputLength));
+        }
+    }, cancellationToken);
+
+    private static UsbProfile ParseUsbProfile(byte value) => value switch
+    {
+        (byte)UsbProfile.PcHid => UsbProfile.PcHid,
+        (byte)UsbProfile.Ps3RockBandGuitar => UsbProfile.Ps3RockBandGuitar,
+        _ => (UsbProfile)0,
+    };
+
+    private static string ReadSerialNumber(HidDevice device)
+    {
+        try
+        {
+            return device.GetSerialNumber() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string FormatMac(byte[] mac) =>

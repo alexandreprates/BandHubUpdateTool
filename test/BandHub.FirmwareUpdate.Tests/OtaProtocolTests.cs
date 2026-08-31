@@ -33,13 +33,42 @@ public sealed class OtaProtocolTests
     }
 
     [Test]
+    public void EncodeUsbProfileCommandMatchesFirmwareContract()
+    {
+        var report = OtaProtocol.EncodeUsbProfileCommand(
+            0x12345678, UsbProfile.Ps3RockBandGuitar);
+
+        Assert.That(report[3], Is.EqualTo((byte)OtaCommand.SetUsbProfile));
+        Assert.That(BitConverter.ToUInt32(report, 4), Is.EqualTo(0x12345678));
+        Assert.That(BitConverter.ToUInt32(report, 8), Is.Zero);
+        Assert.That(BitConverter.ToUInt32(report, 12), Is.Zero);
+        Assert.That(report[16], Is.EqualTo(1));
+        Assert.That(report[17], Is.EqualTo((byte)UsbProfile.Ps3RockBandGuitar));
+        Assert.That(BitConverter.ToUInt16(report, 61), Is.EqualTo(OtaProtocol.Crc16(report, 61)));
+    }
+
+    [Test]
+    public void EncodePs3ReturnToPcOutputUsesReportZeroAndExactMagic()
+    {
+        var output = OtaProtocol.EncodePs3ReturnToPcOutput(12);
+
+        Assert.That(output, Has.Length.EqualTo(12));
+        Assert.That(output[0], Is.Zero);
+        Assert.That(output[1..9], Is.EqualTo(new byte[]
+        {
+            0x42, 0x48, 0x55, 0x53, 0x42, 0x50, 0x43, 0x01,
+        }));
+        Assert.That(output[9..], Is.EqualTo(new byte[3]));
+    }
+
+    [Test]
     public void ParseDeviceInfoReturnsExactHardwareIdentity()
     {
         var report = new byte[64];
         report[0] = OtaProtocol.DeviceInfoReportId;
         Write16(report, 1, 0x4942);
         report[3] = 1;
-        report[4] = 0x03;
+        report[4] = 0x07;
         report[5] = 1;
         Write32(report, 7, (uint)FirmwareTarget.DongleZeroPc);
         Write32(report, 11, 0x00030000);
@@ -61,6 +90,7 @@ public sealed class OtaProtocolTests
         Assert.That(info.DongleTarget, Is.EqualTo(FirmwareTarget.DongleZeroPc));
         Assert.That(info.ControllerTarget, Is.EqualTo(FirmwareTarget.ControllerGh5));
         Assert.That(info.SupportsDongleSelfOta, Is.True);
+        Assert.That(info.SupportsUsbProfileSwitch, Is.True);
         Assert.That(info.SupportsControllerPackageV2, Is.True);
         Assert.That(info.ControllerConnected, Is.True);
         Assert.That(info.ControllerBatteryPercent, Is.EqualTo(72));

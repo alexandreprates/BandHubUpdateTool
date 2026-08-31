@@ -20,6 +20,8 @@ internal sealed class MainWindow : Window
     private readonly Button refreshButton = new("Refresh");
     private readonly Button updateButton = new("Update all") { Sensitive = false };
     private readonly Button localButton = new("Use local bundle...") { Sensitive = false };
+    private readonly ComboBoxText usbProfiles = new();
+    private readonly Button applyProfileButton = new("Apply USB profile") { Sensitive = false };
     private readonly Button cancelButton = new("Cancel") { Sensitive = false };
     private IReadOnlyList<DongleDescriptor> descriptors = Array.Empty<DongleDescriptor>();
     private CancellationTokenSource? operation;
@@ -48,6 +50,14 @@ internal sealed class MainWindow : Window
         selector.PackStart(dongles, true, true, 0);
         selector.PackStart(refreshButton, false, false, 0);
         root.PackStart(selector, false, false, 0);
+
+        usbProfiles.AppendText("PC HID");
+        usbProfiles.AppendText("PS3 Rock Band Guitar");
+        var profileSelector = new Box(Orientation.Horizontal, 8);
+        profileSelector.PackStart(new Label("USB profile:") { Xalign = 0 }, false, false, 0);
+        profileSelector.PackStart(usbProfiles, true, true, 0);
+        profileSelector.PackStart(applyProfileButton, false, false, 0);
+        root.PackStart(profileSelector, false, false, 0);
 
         var statusFrame = new Frame("Device status") { BorderWidth = 8 };
         var statusBox = new Box(Orientation.Vertical, 6) { BorderWidth = 10 };
@@ -80,6 +90,8 @@ internal sealed class MainWindow : Window
         };
         refreshButton.Clicked += async (_, _) => await RefreshAsync();
         dongles.Changed += (_, _) => ShowSelectedDevice();
+        usbProfiles.Changed += (_, _) => UpdateProfileAction();
+        applyProfileButton.Clicked += async (_, _) => await ChangeUsbProfileAsync();
         updateButton.Clicked += async (_, _) => await RunOnlineUpdateAsync();
         localButton.Clicked += async (_, _) => await RunLocalUpdateAsync();
         cancelButton.Clicked += (_, _) => operation?.Cancel();
@@ -103,12 +115,13 @@ internal sealed class MainWindow : Window
         {
             return;
         }
+        var preferredSerial = SelectedDongleSerial();
         var preferredMac = SelectedDongleMac();
         SetBusy(true, "Searching for Dongles...");
         try
         {
             var discovered = await discovery.DiscoverAsync(CancellationToken.None);
-            ReplaceDescriptors(discovered, preferredMac);
+            ReplaceDescriptors(discovered, preferredSerial, preferredMac);
             AppendLog($"Found {descriptors.Count} BandHub Dongle interface(s).");
         }
         catch (Exception error)
@@ -129,11 +142,18 @@ internal sealed class MainWindow : Window
         {
             updateButton.Sensitive = false;
             localButton.Sensitive = false;
+            usbProfiles.Sensitive = false;
+            applyProfileButton.Sensitive = false;
             return;
         }
+        usbProfiles.Active = descriptor.UsbProfile == UsbProfile.Ps3RockBandGuitar ? 1 : 0;
+        usbProfiles.Sensitive = operation == null && descriptor.CanSwitchUsbProfile;
+        UpdateProfileAction();
         if (!descriptor.Supported || descriptor.DeviceInfo == null)
         {
-            deviceSummary.Text = descriptor.UnsupportedReason;
+            deviceSummary.Text =
+                $"USB profile: {UsbProfileName(descriptor.UsbProfile)}. " +
+                descriptor.UnsupportedReason;
             controllerSummary.Text = string.Empty;
             updateButton.Sensitive = false;
             localButton.Sensitive = false;
@@ -142,7 +162,8 @@ internal sealed class MainWindow : Window
 
         var info = descriptor.DeviceInfo;
         deviceSummary.Text =
-            $"Dongle: {info.DongleTarget}, firmware 0x{info.DongleFirmwareVersion:X8}";
+            $"Dongle: {info.DongleTarget}, firmware 0x{info.DongleFirmwareVersion:X8}, " +
+            $"USB profile {UsbProfileName(descriptor.UsbProfile)}";
         controllerSummary.Text = !info.ControllerConnected
             ? "Controller: not connected"
             : !info.SupportsControllerPackageV2
@@ -153,6 +174,85 @@ internal sealed class MainWindow : Window
                       : info.BatteryValid ? $"{info.ControllerBatteryPercent}%" : "unavailable");
         updateButton.Sensitive = operation == null && ControllerIdentityReady(info);
         localButton.Sensitive = updateButton.Sensitive;
+    }
+
+    private void UpdateProfileAction()
+    {
+        var descriptor = SelectedDescriptor();
+        var targetProfile = SelectedUsbProfile();
+        applyProfileButton.Sensitive = operation == null &&
+                                       descriptor?.CanSwitchUsbProfile == true &&
+                                       targetProfile != null &&
+                                       targetProfile != descriptor.UsbProfile;
+    }
+
+    private async Task ChangeUsbProfileAsync()
+    {
+        var descriptor = SelectedDescriptor();
+        var targetProfile = SelectedUsbProfile();
+        if (descriptor == null || targetProfile == null || operation != null ||
+            targetProfile == descriptor.UsbProfile)
+        {
+            return;
+        }
+        if (targetProfile == UsbProfile.Ps3RockBandGuitar &&
+            !ConfirmPs3ProfileSelection())
+        {
+            usbProfiles.Active = 0;
+            return;
+        }
+
+        operation = new CancellationTokenSource();
+        SetBusy(true, "Changing USB profile...");
+        AppendLog($"Changing USB profile to {UsbProfileName(targetProfile.Value)}...");
+        try
+        {
+            var switched = await discovery.SwitchUsbProfileAsync(
+                descriptor,
+                targetProfile.Value,
+                TimeSpan.FromSeconds(30),
+                operation.Token);
+            var discovered = await discovery.DiscoverAsync(operation.Token);
+            ReplaceDescriptors(
+                discovered,
+                switched.SerialNumber,
+                switched.DeviceInfo?.DongleMac);
+            AppendLog(
+                $"USB profile changed to {UsbProfileName(targetProfile.Value)} successfully.");
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("USB profile change cancelled.");
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
+        finally
+        {
+            operation.Dispose();
+            operation = null;
+            SetBusy(false, "Idle");
+            ShowSelectedDevice();
+        }
+    }
+
+    private bool ConfirmPs3ProfileSelection()
+    {
+        using var dialog = new MessageDialog(
+            this,
+            DialogFlags.Modal,
+            MessageType.Question,
+            ButtonsType.None,
+            "Switch this Dongle to the PS3 Rock Band Guitar profile?");
+        dialog.Title = "Change USB profile";
+        dialog.SecondaryText =
+            "Firmware updates are available only in the PC HID profile. " +
+            "You can return to PC HID from this application at any time.";
+        dialog.AddButton("Cancel", ResponseType.Cancel);
+        dialog.AddButton("Switch profile", ResponseType.Accept);
+        dialog.DefaultResponse = ResponseType.Accept;
+        return (ResponseType)dialog.Run() == ResponseType.Accept;
     }
 
     private async Task RunOnlineUpdateAsync()
@@ -326,14 +426,16 @@ internal sealed class MainWindow : Window
 
     private async Task RefreshAfterOperationAsync()
     {
+        var preferredSerial = SelectedDongleSerial();
         var preferredMac = SelectedDongleMac();
         var discovered = await discovery.DiscoverAsync(CancellationToken.None);
-        ReplaceDescriptors(discovered, preferredMac);
+        ReplaceDescriptors(discovered, preferredSerial, preferredMac);
         AppendLog("Device information refreshed after update.");
     }
 
     private void ReplaceDescriptors(
         IReadOnlyList<DongleDescriptor> discovered,
+        string? preferredSerial,
         byte[]? preferredMac)
     {
         descriptors = discovered;
@@ -343,8 +445,8 @@ internal sealed class MainWindow : Window
             dongles.AppendText(descriptor.DisplayName);
         }
 
-        var selectedIndex = DongleDescriptorSelection.FindByMac(
-            descriptors, preferredMac);
+        var selectedIndex = DongleDescriptorSelection.FindByIdentity(
+            descriptors, preferredSerial, preferredMac);
         if (selectedIndex < 0 && descriptors.Count > 0)
         {
             selectedIndex = 0;
@@ -359,6 +461,23 @@ internal sealed class MainWindow : Window
 
     private byte[]? SelectedDongleMac() =>
         SelectedDescriptor()?.DeviceInfo?.DongleMac.ToArray();
+
+    private string? SelectedDongleSerial() =>
+        SelectedDescriptor()?.SerialNumber;
+
+    private UsbProfile? SelectedUsbProfile() => usbProfiles.Active switch
+    {
+        0 => UsbProfile.PcHid,
+        1 => UsbProfile.Ps3RockBandGuitar,
+        _ => null,
+    };
+
+    private static string UsbProfileName(UsbProfile profile) => profile switch
+    {
+        UsbProfile.PcHid => "PC HID",
+        UsbProfile.Ps3RockBandGuitar => "PS3 Rock Band Guitar",
+        _ => "unknown",
+    };
 
     private DongleDescriptor? SelectedDescriptor()
     {
@@ -378,10 +497,12 @@ internal sealed class MainWindow : Window
         refreshButton.Sensitive = !busy;
         dongles.Sensitive = !busy;
         var selected = SelectedDescriptor();
+        usbProfiles.Sensitive = !busy && selected?.CanSwitchUsbProfile == true;
         updateButton.Sensitive = !busy && selected?.Supported == true &&
                                  selected.DeviceInfo != null &&
                                  ControllerIdentityReady(selected.DeviceInfo);
         localButton.Sensitive = updateButton.Sensitive;
+        UpdateProfileAction();
         cancelButton.Sensitive = busy && operation != null;
         progress.Text = text;
         if (!busy)

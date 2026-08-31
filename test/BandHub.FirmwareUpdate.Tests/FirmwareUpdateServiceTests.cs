@@ -147,6 +147,30 @@ public sealed class FirmwareUpdateServiceTests
     }
 
     [Test]
+    public void DongleSelectionFollowsSerialAcrossUsbProfileChanges()
+    {
+        var descriptors = new[]
+        {
+            new DongleDescriptor
+            {
+                Path = "unrelated",
+                SerialNumber = "001122334455",
+                UsbProfile = UsbProfile.PcHid,
+            },
+            new DongleDescriptor
+            {
+                Path = "selected-ps3",
+                SerialNumber = "A1B2C3D4E5F6",
+                UsbProfile = UsbProfile.Ps3RockBandGuitar,
+            },
+        };
+
+        Assert.That(DongleDescriptorSelection.FindByIdentity(
+                        descriptors, "a1b2c3d4e5f6", null),
+                    Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task ConfirmationRefreshesDeviceStateAfterDownload()
     {
         var initial = SupportedDevice(controllerBatteryPercent: 80);
