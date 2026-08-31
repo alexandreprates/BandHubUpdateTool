@@ -43,7 +43,9 @@ connected, then refreshes the live hardware identity before continuing.
 
 The Update All transaction stages the Controller package without starting it,
 updates and validates the Dongle, reconnects to the same Dongle MAC, and only
-then arms the Controller update.
+then asks the user to press the PS button while it waits for the live Controller
+connection. After the Controller reconnects, the updater revalidates its target,
+firmware version, identity, and power before arming the Controller update.
 
 ## Linux packaging
 

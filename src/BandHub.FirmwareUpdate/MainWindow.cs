@@ -23,6 +23,7 @@ internal sealed class MainWindow : Window
     private readonly Button cancelButton = new("Cancel") { Sensitive = false };
     private IReadOnlyList<DongleDescriptor> descriptors = Array.Empty<DongleDescriptor>();
     private CancellationTokenSource? operation;
+    private MessageDialog? controllerWakeDialog;
 
     public MainWindow() : base("BandHub Firmware Update")
     {
@@ -90,6 +91,7 @@ internal sealed class MainWindow : Window
     {
         if (disposing)
         {
+            CloseControllerWakeDialog();
             operation?.Dispose();
         }
         base.Dispose(disposing);
@@ -194,6 +196,14 @@ internal sealed class MainWindow : Window
         SetBusy(true, "Preparing update...");
         var reporter = new Progress<UpdateProgress>(value =>
         {
+            if (value.Stage == "controller-wake" && value.Percent < 100)
+            {
+                ShowControllerWakeDialog();
+            }
+            else
+            {
+                CloseControllerWakeDialog();
+            }
             progress.Fraction = value.Percent / 100.0;
             progress.Text = $"{value.Percent}% — {value.Message}";
             AppendLog(value.Message);
@@ -210,14 +220,17 @@ internal sealed class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            CloseControllerWakeDialog();
             AppendLog("Update cancelled before completion.");
         }
         catch (Exception error)
         {
+            CloseControllerWakeDialog();
             ShowError(error);
         }
         finally
         {
+            CloseControllerWakeDialog();
             if (source is IDisposable disposable)
             {
                 disposable.Dispose();
@@ -268,6 +281,47 @@ internal sealed class MainWindow : Window
             }
         });
         return completion.Task;
+    }
+
+    private void ShowControllerWakeDialog()
+    {
+        if (controllerWakeDialog != null)
+        {
+            return;
+        }
+
+        var dialog = new MessageDialog(
+            this,
+            DialogFlags.Modal,
+            MessageType.Info,
+            ButtonsType.None,
+            "Dongle update completed.");
+        dialog.Title = "Wake the Controller";
+        dialog.SecondaryText =
+            "Press the PS button to wake the Controller.\n\n" +
+            "The update will continue automatically as soon as the Controller reconnects.";
+        dialog.AddButton("Cancel update", ResponseType.Cancel);
+        dialog.Response += (_, _) => operation?.Cancel();
+        dialog.DeleteEvent += (_, args) =>
+        {
+            operation?.Cancel();
+            args.RetVal = true;
+        };
+        controllerWakeDialog = dialog;
+        dialog.ShowAll();
+    }
+
+    private void CloseControllerWakeDialog()
+    {
+        var dialog = controllerWakeDialog;
+        if (dialog == null)
+        {
+            return;
+        }
+
+        controllerWakeDialog = null;
+        dialog.Destroy();
+        dialog.Dispose();
     }
 
     private async Task RefreshAfterOperationAsync()

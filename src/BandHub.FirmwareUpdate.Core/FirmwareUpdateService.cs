@@ -45,6 +45,7 @@ public sealed class FirmwareUpdateService
 {
     private static readonly TimeSpan DongleReconnectGuidanceDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DongleReconnectTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ControllerWakeTimeout = TimeSpan.FromMinutes(2);
     private readonly IDongleDiscovery discovery;
 
     public FirmwareUpdateService(IDongleDiscovery discovery) => this.discovery = discovery;
@@ -110,9 +111,13 @@ public sealed class FirmwareUpdateService
                 reporter.Report("complete", 100, "The Dongle and Controller are up to date.");
                 return;
             }
+            var expectedControllerMac = Array.Empty<byte>();
+            var expectedControllerFirmwareVersion = 0U;
             if (updateController)
             {
                 ValidateControllerReady(info);
+                expectedControllerMac = info.ControllerMac.AsSpan().ToArray();
+                expectedControllerFirmwareVersion = info.ControllerFirmwareVersion;
                 await UploadAsync(
                     dongle,
                     release.ControllerPackage!,
@@ -158,9 +163,20 @@ public sealed class FirmwareUpdateService
 
             if (updateController)
             {
-                info = await WaitForControllerReadyAsync(
-                    dongle, TimeSpan.FromSeconds(30), cancellationToken)
-                    .ConfigureAwait(false);
+                info = updateDongle
+                    ? await WaitForControllerAfterDongleUpdateAsync(
+                        dongle,
+                        reporter,
+                        ControllerWakeTimeout,
+                        cancellationToken).ConfigureAwait(false)
+                    : await WaitForControllerReadyAsync(
+                        dongle, TimeSpan.FromSeconds(30), cancellationToken)
+                        .ConfigureAwait(false);
+                ValidateControllerSelection(
+                    info,
+                    release.ControllerPackage!.Target,
+                    expectedControllerFirmwareVersion,
+                    expectedControllerMac);
                 var armSession = NewSessionId();
                 await dongle.SendCommandAsync(
                     OtaProtocol.EncodeCommand(OtaCommand.ArmController, armSession),
@@ -497,6 +513,23 @@ public sealed class FirmwareUpdateService
         info.ControllerExternallyPowered ||
         (info.BatteryValid && info.ControllerBatteryPercent >= 30);
 
+    internal static void ValidateControllerSelection(
+        DeviceInfo info,
+        FirmwareTarget expectedTarget,
+        uint expectedFirmwareVersion,
+        byte[] expectedMac)
+    {
+        ValidateControllerReady(info);
+        if (info.ControllerTarget != expectedTarget ||
+            info.ControllerFirmwareVersion != expectedFirmwareVersion ||
+            !CryptographicOperations.FixedTimeEquals(info.ControllerMac, expectedMac))
+        {
+            throw new InvalidOperationException(
+                "The paired Controller changed after the Dongle restarted. " +
+                "Restart the update to select and verify the correct firmware.");
+        }
+    }
+
     private static void ValidateControllerIdentity(DeviceInfo info)
     {
         if (!info.SupportsControllerOta || !info.ControllerBound ||
@@ -533,9 +566,43 @@ public sealed class FirmwareUpdateService
             }
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
-        ValidateControllerReady(last ?? throw new TimeoutException(
-            "Controller information was not available after the Dongle restarted."));
-        throw new TimeoutException("Controller did not become ready after the Dongle restarted.");
+        if (last == null || !last.ControllerConnected)
+        {
+            throw new TimeoutException(
+                "Controller did not become ready after the Dongle restarted.");
+        }
+        ValidateControllerReady(last);
+        return last;
+    }
+
+    internal static async Task<DeviceInfo> WaitForControllerAfterDongleUpdateAsync(
+        IDongleTransport dongle,
+        UpdateProgressReporter progress,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        progress.Report(
+            "controller-wake",
+            0,
+            "Dongle update completed. Press the PS button to wake the Controller; " +
+            "the update will continue automatically when it reconnects.");
+        try
+        {
+            var info = await WaitForControllerReadyAsync(
+                dongle, timeout, cancellationToken).ConfigureAwait(false);
+            progress.Report(
+                "controller-wake",
+                100,
+                "Controller reconnected; continuing with its firmware update.");
+            return info;
+        }
+        catch (TimeoutException error)
+        {
+            throw new TimeoutException(
+                "The Controller did not reconnect after the Dongle update. " +
+                "Press the PS button to wake it, then retry the update.",
+                error);
+        }
     }
 
     private static async Task<DeviceInfo> WaitForControllerIdentityAsync(

@@ -281,6 +281,68 @@ public sealed class FirmwareUpdateServiceTests
         Assert.That(error?.InnerException?.Message, Does.Contain("Simulated discovery timeout"));
     }
 
+    [Test]
+    public async Task ControllerWakeWaitReportsGuidanceUntilControllerReconnects()
+    {
+        var disconnected = SupportedDevice(flags: 0x05);
+        var reconnected = SupportedDevice();
+        var transport = new FakeTransport(disconnected);
+        transport.NextDeviceInfos.Enqueue(reconnected);
+        var recorded = new RecordingProgress();
+
+        var result = await FirmwareUpdateService.WaitForControllerAfterDongleUpdateAsync(
+            transport,
+            new UpdateProgressReporter(recorded),
+            TimeSpan.FromSeconds(1),
+            CancellationToken.None);
+
+        Assert.That(result, Is.SameAs(reconnected));
+        Assert.That(transport.DeviceInfoReadCount, Is.EqualTo(2));
+        Assert.That(recorded.Values, Has.Count.EqualTo(2));
+        Assert.That(recorded.Values[0].Stage, Is.EqualTo("controller-wake"));
+        Assert.That(recorded.Values[0].Percent, Is.Zero);
+        Assert.That(recorded.Values[0].Message, Does.Contain("PS button"));
+        Assert.That(recorded.Values[1].Percent, Is.EqualTo(100));
+        Assert.That(recorded.Values[1].Message, Does.Contain("reconnected"));
+    }
+
+    [Test]
+    public void ControllerWakeTimeoutIncludesRetryGuidance()
+    {
+        var transport = new FakeTransport(SupportedDevice(flags: 0x05));
+
+        var error = Assert.ThrowsAsync<TimeoutException>(async () =>
+            await FirmwareUpdateService.WaitForControllerAfterDongleUpdateAsync(
+                transport,
+                new UpdateProgressReporter(null),
+                TimeSpan.Zero,
+                CancellationToken.None));
+
+        Assert.That(error?.Message, Does.Contain("Press the PS button"));
+        Assert.That(error?.InnerException, Is.TypeOf<TimeoutException>());
+    }
+
+    [Test]
+    public void ControllerSelectionIsRevalidatedBeforeArmingUpdate()
+    {
+        var expectedMac = new byte[] { 0x02, 6, 7, 8, 9, 10 };
+
+        Assert.DoesNotThrow(() => FirmwareUpdateService.ValidateControllerSelection(
+            SupportedDevice(),
+            FirmwareTarget.ControllerGh3,
+            0x00020000,
+            expectedMac));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            FirmwareUpdateService.ValidateControllerSelection(
+                SupportedDevice(controllerFirmwareVersion: 0x00020001),
+                FirmwareTarget.ControllerGh3,
+                0x00020000,
+                expectedMac));
+
+        Assert.That(error?.Message, Does.Contain("Controller changed"));
+    }
+
     private static DongleDescriptor Descriptor(string path, byte[] mac) => new()
     {
         Path = path,
@@ -295,14 +357,15 @@ public sealed class FirmwareUpdateServiceTests
         byte flags = 0x07,
         byte controllerBatteryPercent = 80,
         FirmwareTarget dongleTarget = FirmwareTarget.DongleZeroPc,
-        FirmwareTarget controllerTarget = FirmwareTarget.ControllerGh3) => new()
+        FirmwareTarget controllerTarget = FirmwareTarget.ControllerGh3,
+        uint controllerFirmwareVersion = 0x00020000) => new()
     {
         Capabilities = 0x03,
         UsbProfile = 1,
         DongleTarget = dongleTarget,
         DongleFirmwareVersion = 0x00020000,
         ControllerTarget = controllerTarget,
-        ControllerFirmwareVersion = 0x00020000,
+        ControllerFirmwareVersion = controllerFirmwareVersion,
         ControllerFeatureFlags = controllerFeatures,
         ControllerBatteryPercent = controllerBatteryPercent,
         Flags = flags,
