@@ -47,6 +47,23 @@ public sealed class OtaProtocolTests
         Assert.That(BitConverter.ToUInt16(report, 61), Is.EqualTo(OtaProtocol.Crc16(report, 61)));
     }
 
+    [TestCase(OtaCommand.UnpairController, 12)]
+    [TestCase(OtaCommand.UnpairDongle, 13)]
+    public void EncodeBindingCommandMatchesFirmwareContract(
+        OtaCommand command,
+        byte expectedValue)
+    {
+        var report = OtaProtocol.EncodeBindingCommand(0x12345678, command);
+
+        Assert.That(report[3], Is.EqualTo(expectedValue));
+        Assert.That(BitConverter.ToUInt32(report, 4), Is.EqualTo(0x12345678));
+        Assert.That(BitConverter.ToUInt32(report, 8), Is.Zero);
+        Assert.That(BitConverter.ToUInt32(report, 12), Is.Zero);
+        Assert.That(report[16], Is.Zero);
+        Assert.That(BitConverter.ToUInt16(report, 61),
+                    Is.EqualTo(OtaProtocol.Crc16(report, 61)));
+    }
+
     [Test]
     public void EncodePs3ReturnToPcOutputUsesReportZeroAndExactMagic()
     {
@@ -68,13 +85,13 @@ public sealed class OtaProtocolTests
         report[0] = OtaProtocol.DeviceInfoReportId;
         Write16(report, 1, 0x4942);
         report[3] = 1;
-        report[4] = 0x07;
+        report[4] = 0x0f;
         report[5] = 1;
         Write32(report, 7, (uint)FirmwareTarget.DongleZeroPc);
         Write32(report, 11, 0x00030000);
         Write32(report, 15, (uint)FirmwareTarget.ControllerGh5);
         Write32(report, 19, 0x00020000);
-        Write32(report, 23, 1U << 10);
+        Write32(report, 23, (1U << 10) | (1U << 12));
         report[27] = 72;
         report[28] = 0x17;
         for (var index = 0; index < 6; ++index)
@@ -91,7 +108,9 @@ public sealed class OtaProtocolTests
         Assert.That(info.ControllerTarget, Is.EqualTo(FirmwareTarget.ControllerGh5));
         Assert.That(info.SupportsDongleSelfOta, Is.True);
         Assert.That(info.SupportsUsbProfileSwitch, Is.True);
+        Assert.That(info.SupportsBindingManagement, Is.True);
         Assert.That(info.SupportsControllerPackageV2, Is.True);
+        Assert.That(info.SupportsControllerRemoteUnpair, Is.True);
         Assert.That(info.ControllerConnected, Is.True);
         Assert.That(info.ControllerBatteryPercent, Is.EqualTo(72));
         Assert.That(info.ControllerExternallyPowered, Is.True);

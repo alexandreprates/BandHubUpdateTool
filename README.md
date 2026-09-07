@@ -26,16 +26,17 @@ trusted by production builds.
 
 Firmware installation supports PC HID Dongles that advertise Dongle self-OTA.
 Current PS3-profile Dongles are detected and can be returned to PC HID from the
-USB profile selector, but are not flashed while the PS3 profile is active.
+`Tools` menu, but are not flashed while the PS3 profile is active.
 Legacy Dongles without the self-OTA agent remain unsupported.
 
 ## USB profiles
 
 Current Dongle firmware contains both the default PC HID identity and the
-experimental PS3 Rock Band Guitar identity. Select the attached Dongle, choose
-`PC HID` or `PS3 Rock Band Guitar`, and apply the profile. The Dongle persists
-the selection and restarts with the requested VID/PID. The application follows
-the same physical Dongle across re-enumeration using its stable USB serial.
+experimental PS3 Rock Band Guitar identity. Select the attached Dongle and use
+`Tools > Switch to PS3 profile`; while PS3 is active, that action becomes
+`Return to PC HID`. The Dongle persists the selection and restarts with the
+requested VID/PID. The application follows the same physical Dongle across
+re-enumeration using its stable USB serial.
 
 The PS3 descriptor intentionally omits the vendor update interface. Its only
 management command is the fixed recovery report used by this application to
@@ -45,6 +46,15 @@ firmware updates.
 Signed release catalogs keep the existing `dongle-devkit-pc` and
 `dongle-zero-pc` target names for compatibility, even though those packages now
 contain the universal runtime-selectable firmware.
+
+## Binding tools
+
+The `Tools` menu also contains two confirmed binding actions for current PC HID
+firmware. `Unpair Controller` requires the Controller to be awake and connected;
+it remotely clears the Controller first and clears the Dongle after the matching
+ESP-NOW acknowledgement. `Unpair Dongle` clears only the local Dongle binding
+and is intended for recovery when the Controller is unavailable. Its warning
+explains that the Controller remains bound and must be cleared separately.
 
 ## Development
 

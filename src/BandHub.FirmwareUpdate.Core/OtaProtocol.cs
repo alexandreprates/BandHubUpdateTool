@@ -30,6 +30,8 @@ public enum OtaCommand : byte
     CommitDongle = 9,
     CancelController = 10,
     SetUsbProfile = 11,
+    UnpairController = 12,
+    UnpairDongle = 13,
 }
 
 public enum OtaState : byte
@@ -64,6 +66,7 @@ public sealed class OtaStatus
 public sealed class DeviceInfo
 {
     private const uint ControllerPackageV2Feature = 1U << 10;
+    private const uint ControllerRemoteUnpairFeature = 1U << 12;
 
     public byte Capabilities { get; init; }
     public byte UsbProfile { get; init; }
@@ -80,8 +83,11 @@ public sealed class DeviceInfo
     public bool SupportsControllerOta => (Capabilities & 0x01) != 0;
     public bool SupportsDongleSelfOta => (Capabilities & 0x02) != 0;
     public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
+    public bool SupportsBindingManagement => (Capabilities & 0x08) != 0;
     public bool SupportsControllerPackageV2 =>
         (ControllerFeatureFlags & ControllerPackageV2Feature) != 0;
+    public bool SupportsControllerRemoteUnpair =>
+        (ControllerFeatureFlags & ControllerRemoteUnpairFeature) != 0;
     public bool ControllerBound => (Flags & 0x01) != 0;
     public bool ControllerConnected => (Flags & 0x02) != 0;
     public bool BatteryValid => (Flags & 0x04) != 0;
@@ -132,6 +138,20 @@ public static class OtaProtocol
             OtaCommand.SetUsbProfile,
             sessionId,
             data: new[] { (byte)profile });
+    }
+
+    public static byte[] EncodeBindingCommand(uint sessionId, OtaCommand command)
+    {
+        if (command != OtaCommand.UnpairController &&
+            command != OtaCommand.UnpairDongle)
+        {
+            throw new ArgumentOutOfRangeException(nameof(command));
+        }
+        if (sessionId == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sessionId));
+        }
+        return EncodeCommand(command, sessionId);
     }
 
     public static byte[] EncodeCommand(
