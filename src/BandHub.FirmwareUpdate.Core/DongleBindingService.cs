@@ -87,14 +87,14 @@ public sealed class DongleBindingService
             throw new NotSupportedException(
                 "The installed Dongle firmware does not support binding tools.");
         }
+        if (command != OtaCommand.UnpairController)
+        {
+            return;
+        }
         if (!info.ControllerBound)
         {
             throw new InvalidOperationException(
                 "The selected Dongle does not have a saved Controller binding.");
-        }
-        if (command != OtaCommand.UnpairController)
-        {
-            return;
         }
         if (!info.ControllerConnected)
         {

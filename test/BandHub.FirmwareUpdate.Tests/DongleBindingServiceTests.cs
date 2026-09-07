@@ -51,6 +51,22 @@ public sealed class DongleBindingServiceTests
     }
 
     [Test]
+    public async Task LocalUnpairSendsCommandWithoutSavedBinding()
+    {
+        var transport = new FakeTransport(Device(flags: 0x00));
+        var service = new DongleBindingService(new FakeDiscovery(transport));
+
+        var result = await service.UnpairDongleAsync(
+            transport.Descriptor, TimeSpan.FromSeconds(1),
+            CancellationToken.None);
+
+        Assert.That(result.ControllerBound, Is.False);
+        Assert.That(transport.Commands, Has.Count.EqualTo(1));
+        Assert.That(transport.Commands[0][3],
+            Is.EqualTo((byte)OtaCommand.UnpairDongle));
+    }
+
+    [Test]
     public void BindingToolsRequirePcHidProfile()
     {
         var transport = new FakeTransport(Device());

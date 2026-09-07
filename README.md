@@ -53,8 +53,10 @@ The `Tools` menu also contains two confirmed binding actions for current PC HID
 firmware. `Unpair Controller` requires the Controller to be awake and connected;
 it remotely clears the Controller first and clears the Dongle after the matching
 ESP-NOW acknowledgement. `Unpair Dongle` clears only the local Dongle binding
-and is intended for recovery when the Controller is unavailable. Its warning
-explains that the Controller remains bound and must be cleared separately.
+and is available whenever a compatible PC HID Dongle is detected, including
+when no Controller is connected or no saved binding is currently reported. It
+is intended as an idempotent recovery action. Its warning explains that a
+Controller with a saved binding remains bound and must be cleared separately.
 
 ## Development
 

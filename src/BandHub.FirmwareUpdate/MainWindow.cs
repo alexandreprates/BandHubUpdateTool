@@ -190,16 +190,12 @@ internal sealed class MainWindow : Window
     private void UpdateToolsMenu()
     {
         var descriptor = SelectedDescriptor();
-        var info = descriptor?.DeviceInfo;
         var idle = operation == null;
-        var pcHid = descriptor?.UsbProfile == UsbProfile.PcHid;
 
-        unpairControllerItem.Sensitive = idle && pcHid &&
-            info?.SupportsBindingManagement == true &&
-            info.SupportsControllerRemoteUnpair &&
-            info.ControllerBound && info.ControllerConnected;
-        unpairDongleItem.Sensitive = idle && pcHid &&
-            info?.SupportsBindingManagement == true && info.ControllerBound;
+        unpairControllerItem.Sensitive = idle &&
+            BindingToolAvailability.CanUnpairController(descriptor);
+        unpairDongleItem.Sensitive = idle &&
+            BindingToolAvailability.CanUnpairDongle(descriptor);
         profileItem.Label = descriptor?.UsbProfile == UsbProfile.Ps3RockBandGuitar
             ? "Return to PC HID"
             : "Switch to PS3 profile...";
