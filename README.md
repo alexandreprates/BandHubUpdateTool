@@ -117,3 +117,18 @@ Windows builds. The workflow tests the source, builds the DEB and MSI, generates
 `SHA256SUMS`, creates artifact attestations, and uploads every file to the same
 release. Installers are currently unsigned and may trigger Windows SmartScreen
 or distribution trust warnings until platform signing is configured.
+
+## Controller diagnostics and calibration
+
+Use **Controller diagnostics...** with a Controller connected directly by USB.
+Refresh and choose its serial identity, capture the resting and full whammy ADC
+values, then release digital controls and leave analog controls stable for one
+second before saving. Inversion follows endpoint order. Debounce settings have
+firmware-enforced bounds. **Restore defaults** persists the original values.
+
+The live panel shows raw/calibrated whammy, input masks and USB queue counters.
+Import/export uses version 1 JSON for the selected GH3/GH5 assembly; import edits
+a draft and Save applies it. A failed save keeps the previous runtime values.
+Production Controller firmware must expose management reports 0x30/0x31;
+legacy firmware remains usable for gameplay but is not listed for calibration.
+Linux packages include a scoped BandHub Controller hidraw access rule.

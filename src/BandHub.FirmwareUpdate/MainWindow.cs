@@ -17,6 +17,7 @@ internal sealed class MainWindow : Window
     private readonly Label controllerSummary = new(string.Empty);
     private readonly ProgressBar progress = new();
     private readonly TextView log = new() { Editable = false, WrapMode = WrapMode.WordChar };
+    private readonly Button calibrationButton = new("Controller diagnostics...");
     private readonly Button refreshButton = new("Refresh");
     private readonly Button updateButton = new("Update all") { Sensitive = false };
     private readonly Button localButton = new("Use local bundle...") { Sensitive = false };
@@ -55,6 +56,8 @@ internal sealed class MainWindow : Window
         };
         root.PackStart(title, false, false, 0);
         root.PackStart(description, false, false, 0);
+        root.PackStart(calibrationButton, false, false, 0);
+        calibrationButton.Clicked += (_, _) => new ControllerCalibrationWindow(this).ShowAll();
 
         var selector = new Box(Orientation.Horizontal, 8);
         selector.PackStart(new Label("Dongle:") { Xalign = 0 }, false, false, 0);
@@ -607,6 +610,7 @@ internal sealed class MainWindow : Window
 
     private void SetBusy(bool busy, string text, bool allowCancel = true)
     {
+        calibrationButton.Sensitive = !busy;
         refreshButton.Sensitive = !busy;
         dongles.Sensitive = !busy;
         var selected = SelectedDescriptor();
