@@ -17,6 +17,7 @@ public sealed class ControllerManagement : IDisposable
     private readonly SemaphoreSlim gate = new(1, 1);
     private uint requestId;
     public byte Profile { get; private set; }
+    public bool CanSleep { get; private set; }
 
     public static IReadOnlyList<ControllerUsbDevice> Discover()
     {
@@ -47,11 +48,15 @@ public sealed class ControllerManagement : IDisposable
         if (response[12] != 1 || response[13] != 1 || (response[14] & 7) != 7 || response[7] is not (3 or 5))
             throw new InvalidDataException("Unsupported controller management capabilities.");
         Profile = response[7];
+        CanSleep = (response[14] & 8) != 0;
     }
     public async Task<ControllerCalibration> ReadAsync(CancellationToken token) =>
         ControllerCalibration.Decode((await ExchangeAsync(1, null, token)).AsSpan(12, 16));
-    public async Task<ControllerCalibration> WriteAsync(ControllerCalibration value, CancellationToken token) =>
-        ControllerCalibration.Decode((await ExchangeAsync(2, value.Encode(), token)).AsSpan(12, 16));
+    public async Task<ControllerCalibration> WriteAsync(ControllerCalibration value, CancellationToken token)
+    {
+        if (value.SleepEnabled && !CanSleep) throw new InvalidOperationException("This firmware does not support wireless inactivity sleep.");
+        return ControllerCalibration.Decode((await ExchangeAsync(2, value.Encode(), token)).AsSpan(12, 16));
+    }
     public async Task<ControllerCalibration> ResetAsync(CancellationToken token) =>
         ControllerCalibration.Decode((await ExchangeAsync(3, null, token)).AsSpan(12, 16));
     public Task<byte[]> DiagnosticsAsync(CancellationToken token) => ExchangeAsync(4, null, token);

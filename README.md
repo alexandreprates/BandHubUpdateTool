@@ -132,3 +132,9 @@ a draft and Save applies it. A failed save keeps the previous runtime values.
 Production Controller firmware must expose management reports 0x30/0x31;
 legacy firmware remains usable for gameplay but is not listed for calibration.
 Linux packages include a scoped BandHub Controller hidraw access rule.
+
+Firmware advertising wireless-sleep support also exposes an opt-in switch and
+connected/disconnected timeouts. Sleep stays off by default, is blocked on USB,
+and wakes through START or cable detection (checked once per second). Validate
+battery isolation and assembled-hardware wake before enabling it. Firmware
+without this capability rejects incompatible sleep-enabled imports.

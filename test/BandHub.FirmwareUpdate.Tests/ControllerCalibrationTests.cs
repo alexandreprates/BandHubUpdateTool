@@ -34,6 +34,9 @@ public sealed class ControllerCalibrationTests
         Assert.Throws<InvalidDataException>(() => (record with { WhammyMax = 101 }).Encode());
         Assert.Throws<InvalidDataException>(() => (record with { ReleaseMs = 0 }).Encode());
         Assert.Throws<InvalidDataException>(() => (record with { ConnectedSleepSeconds = 10 }).Encode());
+        var sleepFile = new CalibrationFile(1, 5, record with { SleepEnabled = true }).Export();
+        Assert.Throws<InvalidDataException>(() => CalibrationFile.Import(sleepFile, 5, false));
+        Assert.That(CalibrationFile.Import(json, 5, false).Calibration, Is.EqualTo(record));
         var wire = record.Encode(); wire[15] = 1;
         Assert.Throws<InvalidDataException>(() => ControllerCalibration.Decode(wire));
     }

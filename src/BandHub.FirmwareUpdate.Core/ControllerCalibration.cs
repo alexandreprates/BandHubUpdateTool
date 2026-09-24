@@ -60,13 +60,15 @@ public sealed record ControllerCalibration
 public sealed record CalibrationFile(int Version, byte Profile, ControllerCalibration Calibration)
 {
     public string Export() { Calibration.Validate(); return JsonConvert.SerializeObject(this, Formatting.Indented); }
-    public static CalibrationFile Import(string json, byte profile)
+    public static CalibrationFile Import(string json, byte profile, bool canSleep = true)
     {
         var result = JsonConvert.DeserializeObject<CalibrationFile>(json,
             new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Error });
         if (result == null || result.Version != 1 || result.Profile != profile || result.Calibration == null)
             throw new InvalidDataException("Choose a version 1 calibration file for this instrument profile.");
         result.Calibration.Validate();
+        if (result.Calibration.SleepEnabled && !canSleep)
+            throw new InvalidDataException("This calibration enables sleep, which the connected firmware does not support.");
         return result;
     }
 }

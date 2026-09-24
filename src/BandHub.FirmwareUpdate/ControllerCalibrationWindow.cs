@@ -16,6 +16,8 @@ internal sealed class ControllerCalibrationWindow : Window
     private readonly Label live = new("Waiting for diagnostics.") { Xalign = 0, Selectable = true };
     private readonly SpinButton rest = new(0, 4095, 1), full = new(0, 4095, 1);
     private readonly SpinButton deadband = new(0, 32, 1), release = new(1, 20, 1), guard = new(0, 10, 1);
+    private readonly CheckButton sleep = new("Enable wireless inactivity sleep (START wakes)");
+    private readonly SpinButton disconnectedSleep = new(60, 3600, 1), connectedSleep = new(60, 7200, 1);
     private readonly CancellationTokenSource lifetime = new();
     private readonly Box settings = new(Orientation.Vertical, 8) { Sensitive = false };
     private IReadOnlyList<ControllerUsbDevice> discovered = Array.Empty<ControllerUsbDevice>();
@@ -44,7 +46,11 @@ internal sealed class ControllerCalibrationWindow : Window
         AddRow(grid, 4, "Strum guard (0–10 ms)", guard);
         var captureRest = new Button("Capture rest"); var captureFull = new Button("Capture full");
         grid.Attach(captureRest, 2, 0, 1, 1); grid.Attach(captureFull, 2, 1, 1, 1);
+        AddRow(grid, 5, "Disconnected idle timeout (seconds)", disconnectedSleep);
+        AddRow(grid, 6, "Connected idle timeout (seconds)", connectedSleep);
         settings.PackStart(grid, false, false, 0);
+        settings.PackStart(sleep, false, false, 0);
+        settings.PackStart(new Label("Sleep is blocked on USB or while controls are held. Cable detection checks once per second.\nValidate battery wiring and START wake before enabling on an assembled guitar.") { Xalign = 0, LineWrap = true }, false, false, 0);
         settings.PackStart(new Label("Move the whammy through its full travel. Endpoint span must be at least 128 ADC units.\nInversion is detected from the endpoint order. Import changes the draft; Save applies it.")
             { Xalign = 0, LineWrap = true }, false, false, 0);
         var actions = new Box(Orientation.Horizontal, 8);
@@ -112,7 +118,8 @@ internal sealed class ControllerCalibrationWindow : Window
         catch (OperationCanceledException) { }
         catch (IOException error) { connection?.Dispose(); connection = null; Ui(() => status.Text = error.Message); }
         catch (Exception error) { Ui(() => status.Text = error.Message); }
-        finally { Ui(() => { busy = false; settings.Sensitive = connection?.Profile is 3 or 5; }); }
+        finally { Ui(() => { busy = false; settings.Sensitive = connection?.Profile is 3 or 5;
+            sleep.Sensitive = disconnectedSleep.Sensitive = connectedSleep.Sensitive = connection?.CanSleep == true; }); }
     }
     private void Capture(SpinButton field)
     {
@@ -123,7 +130,8 @@ internal sealed class ControllerCalibrationWindow : Window
     {
         var a = (ushort)rest.ValueAsInt; var b = (ushort)full.ValueAsInt;
         var value = current with { WhammyMin = Math.Min(a, b), WhammyMax = Math.Max(a, b), Inverted = a > b,
-            Deadband = (byte)deadband.ValueAsInt, ReleaseMs = (byte)release.ValueAsInt, StrumGuardMs = (byte)guard.ValueAsInt };
+            Deadband = (byte)deadband.ValueAsInt, ReleaseMs = (byte)release.ValueAsInt, StrumGuardMs = (byte)guard.ValueAsInt, SleepEnabled = sleep.Active,
+            DisconnectedSleepSeconds = (ushort)disconnectedSleep.ValueAsInt, ConnectedSleepSeconds = (ushort)connectedSleep.ValueAsInt };
         value.Validate(); return value;
     }
     private void ShowValue(ControllerCalibration value)
@@ -131,6 +139,7 @@ internal sealed class ControllerCalibrationWindow : Window
         current = value; rest.Value = value.Inverted ? value.WhammyMax : value.WhammyMin;
         full.Value = value.Inverted ? value.WhammyMin : value.WhammyMax;
         deadband.Value = value.Deadband; release.Value = value.ReleaseMs; guard.Value = value.StrumGuardMs;
+        sleep.Active = value.SleepEnabled; disconnectedSleep.Value = value.DisconnectedSleepSeconds; connectedSleep.Value = value.ConnectedSleepSeconds;
     }
     private async Task ReadDiagnostics()
     {
@@ -140,7 +149,8 @@ internal sealed class ControllerCalibrationWindow : Window
         var text = $"Raw whammy: {rawValue}    Calibrated: {d.Span[14]}    GH5 neck: {(d.Span[15] != 0 ? "connected" : "absent")}\n" +
             $"Frets/strum: 0x{BinaryPrimitives.ReadUInt32LittleEndian(d.Span[8..]):X8}    Body: 0x{BinaryPrimitives.ReadUInt32LittleEndian(d.Span[4..]):X8}\n" +
             $"USB queued: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[16..])}    Delivered: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[20..])}    Dropped: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[24..])}\n" +
-            $"Overflows: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[28..])}    Expired: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[32..])}    Max queue age: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[36..])} ms";
+            $"Overflows: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[28..])}    Expired: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[32..])}    Max queue age: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[36..])} ms\n" +
+            $"GH5 read errors: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[40..])}    Max acquisition: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[44..])} µs";
         Ui(() => { raw = rawValue; lastSample = Environment.TickCount64; live.Text = text; });
     }
     private void FileAction(bool export)
@@ -154,7 +164,7 @@ internal sealed class ControllerCalibrationWindow : Window
         try
         {
             if (export) File.WriteAllText(chooser.Filename, new CalibrationFile(1, connection.Profile, Draft()).Export());
-            else ShowValue(CalibrationFile.Import(File.ReadAllText(chooser.Filename), connection.Profile).Calibration);
+            else ShowValue(CalibrationFile.Import(File.ReadAllText(chooser.Filename), connection.Profile, connection.CanSleep).Calibration);
             status.Text = export ? "Draft exported." : "Draft imported. Review values, then Save to Controller.";
         }
         catch (Exception error) { status.Text = error.Message; }
