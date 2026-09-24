@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -99,7 +100,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                 {
                     Path = device.DevicePath,
                     DisplayName = $"BandHub Dongle {FormatMac(info.DongleMac)}",
-                    Supported = profile == UsbProfile.PcHid && info.SupportsDongleSelfOta,
+                    Supported = UsbProfileSupport.For(profile).Management && info.SupportsDongleSelfOta,
                     UnsupportedReason = profile == 0
                         ? "The installed firmware reported an unrecognized USB profile."
                         : !info.SupportsDongleSelfOta
@@ -131,6 +132,11 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                      OtaProtocol.Ps3VendorId, OtaProtocol.Ps3ProductId))
         {
             var serialNumber = ReadSerialNumber(device);
+            try
+            {
+                if (!UsbProfileSupport.IsBandHubPs3Identity(device.GetManufacturer(), device.GetProductName(), serialNumber)) continue;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { continue; }
             results.Add(new DongleDescriptor
             {
                 Path = device.DevicePath,
@@ -228,7 +234,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             {
                 throw new NotSupportedException("The requested USB profile transition is invalid.");
             }
-            await SendPs3ReturnToPcAsync(descriptor.Path, cancellationToken)
+            await SendPs3ReturnToPcAsync(descriptor.Path, descriptor.SerialNumber, cancellationToken)
                 .ConfigureAwait(false);
         }
         else
@@ -283,7 +289,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
     }
 
     private static Task SendPs3ReturnToPcAsync(
-        string path,
+        string path, string expectedSerial,
         CancellationToken cancellationToken) => Task.Run(() =>
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -291,6 +297,9 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             item => item.DevicePath == path)
             ?? throw new InvalidOperationException(
                 "The selected Dongle is no longer connected.");
+        if (!UsbProfileSupport.MatchesPs3Recovery(device.VendorID, device.ProductID,
+                device.GetManufacturer(), device.GetProductName(), ReadSerialNumber(device), expectedSerial))
+            throw new InvalidOperationException("The selected PS3 Dongle identity changed. Refresh the device list.");
         if (!device.TryOpen(out HidStream stream))
         {
             throw new InvalidOperationException(

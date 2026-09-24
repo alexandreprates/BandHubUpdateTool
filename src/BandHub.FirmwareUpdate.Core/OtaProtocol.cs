@@ -83,6 +83,7 @@ public sealed class DeviceInfo
     public bool SupportsControllerOta => (Capabilities & 0x01) != 0;
     public bool SupportsDongleSelfOta => (Capabilities & 0x02) != 0;
     public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
+    public bool SupportsLinkDiagnostics => (Capabilities & 0x10) != 0;
     public bool SupportsBindingManagement => (Capabilities & 0x08) != 0;
     public bool SupportsControllerPackageV2 =>
         (ControllerFeatureFlags & ControllerPackageV2Feature) != 0;

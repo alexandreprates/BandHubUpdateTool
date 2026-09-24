@@ -41,7 +41,11 @@ re-enumeration using its stable USB serial.
 The PS3 descriptor intentionally omits the vendor update interface. Its only
 management command is the fixed recovery report used by this application to
 return to PC HID. Switch back to PC HID before installing Controller or Dongle
-firmware updates.
+firmware updates. Recovery discovery checks the exact BandHub manufacturer,
+product and serial, then revalidates the identity immediately before opening
+the device; a shared Rock Band VID/PID alone is insufficient. PC HID supports
+battery and production link diagnostics; the PS3 gameplay descriptor does not
+expose those reports.
 
 Signed release catalogs keep the existing `dongle-devkit-pc` and
 `dongle-zero-pc` target names for compatibility, even though those packages now
