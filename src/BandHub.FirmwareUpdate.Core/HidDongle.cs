@@ -93,6 +93,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             var serialNumber = ReadSerialNumber(device);
             try
             {
+                if (device.GetProductName().StartsWith("BandHub Xbox 360", StringComparison.Ordinal)) continue;
                 using var transport = OpenDevice(device);
                 var info = transport.ReadDeviceInfoAsync(cancellationToken).GetAwaiter().GetResult();
                 var profile = ParseUsbProfile(info.UsbProfile);
@@ -151,6 +152,11 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                 CanSwitchUsbProfile = true,
             });
         }
+        foreach (var device in UsbProfileManagement.DiscoverAsync(cancellationToken).GetAwaiter().GetResult().Where(x => x.Role == 2))
+            results.Add(new DongleDescriptor { Path = device.Path, SerialNumber = device.Serial,
+                DisplayName = $"BandHub Xbox 360 Dongle {device.Serial}", UsbProfile = device.Profile,
+                Supported = false, CanSwitchUsbProfile = true,
+                UnsupportedReason = "Return to PC HID before updating firmware." });
         return results;
     }, cancellationToken);
 
@@ -193,7 +199,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         if (targetProfile != UsbProfile.PcHid &&
-            targetProfile != UsbProfile.Ps3RockBandGuitar)
+            targetProfile != UsbProfile.Ps3RockBandGuitar && targetProfile != UsbProfile.Xbox360GuitarHero)
         {
             throw new ArgumentOutOfRangeException(nameof(targetProfile));
         }
@@ -215,18 +221,27 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
 
         if (descriptor.UsbProfile == UsbProfile.PcHid)
         {
-            if (targetProfile != UsbProfile.Ps3RockBandGuitar)
+            if (targetProfile != UsbProfile.Ps3RockBandGuitar &&
+                !(targetProfile == UsbProfile.Xbox360GuitarHero && descriptor.DeviceInfo?.SupportsXbox360Profile == true))
             {
                 throw new NotSupportedException("The requested USB profile transition is invalid.");
             }
             using (var transport = await OpenAsync(descriptor.Path, cancellationToken)
                        .ConfigureAwait(false))
             {
+                var info = await transport.ReadDeviceInfoAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(transport.Descriptor.SerialNumber, descriptor.SerialNumber, StringComparison.OrdinalIgnoreCase) || info.UsbProfile != 1 ||
+                    !info.SupportsUsbProfileSwitch || (targetProfile == UsbProfile.Xbox360GuitarHero && !info.SupportsXbox360Profile))
+                    throw new InvalidOperationException("Dongle identity or capabilities changed. Refresh the device list.");
                 var sessionId = (uint)RandomNumberGenerator.GetInt32(1, int.MaxValue);
                 await transport.SendCommandAsync(
                     OtaProtocol.EncodeUsbProfileCommand(sessionId, targetProfile),
                     cancellationToken).ConfigureAwait(false);
             }
+        }
+        else if (descriptor.UsbProfile == UsbProfile.Xbox360GuitarHero)
+        {
+            await UsbProfileManagement.SendProfileAsync(new(descriptor.Path, descriptor.SerialNumber, 2, descriptor.UsbProfile, 0x0e), targetProfile, cancellationToken).ConfigureAwait(false);
         }
         else if (descriptor.UsbProfile == UsbProfile.Ps3RockBandGuitar)
         {
@@ -275,8 +290,8 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             cancellationToken.ThrowIfCancellationRequested();
             var descriptors = await DiscoverAsync(cancellationToken).ConfigureAwait(false);
             var candidates = descriptors.Where(item => item.UsbProfile == targetProfile).ToList();
-            var selected = DongleDescriptorSelection.FindByIdentity(
-                candidates, serialNumber, mac);
+            var selected = candidates.FindIndex(item =>
+                string.Equals(item.SerialNumber, serialNumber, StringComparison.OrdinalIgnoreCase));
             if (selected >= 0)
             {
                 return candidates[selected];
@@ -317,6 +332,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
     {
         (byte)UsbProfile.PcHid => UsbProfile.PcHid,
         (byte)UsbProfile.Ps3RockBandGuitar => UsbProfile.Ps3RockBandGuitar,
+        (byte)UsbProfile.Xbox360GuitarHero => UsbProfile.Xbox360GuitarHero,
         _ => (UsbProfile)0,
     };
 
@@ -350,6 +366,7 @@ internal sealed class HidDongleTransport : IDongleTransport
         {
             Path = device.DevicePath,
             DisplayName = "BandHub Dongle",
+            SerialNumber = device.GetSerialNumber(),
             Supported = true,
         };
     }

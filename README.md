@@ -31,10 +31,10 @@ Legacy Dongles without the self-OTA agent remain unsupported.
 
 ## USB profiles
 
-Current Dongle firmware contains both the default PC HID identity and the
-experimental PS3 Rock Band Guitar identity. Select the attached Dongle and use
-`Tools > Switch to PS3 profile`; while PS3 is active, that action becomes
-`Return to PC HID`. The Dongle persists the selection and restarts with the
+Current Dongle firmware contains the default PC HID identity and experimental
+PS3 Rock Band Guitar and Xbox 360 Guitar Hero identities. Select the attached Dongle and use
+`Tools > USB profiles...`; while PS3 is active, select
+`PC HID`. The Dongle persists the selection and restarts with the
 requested VID/PID. The application follows the same physical Dongle across
 re-enumeration using its stable USB serial.
 
@@ -142,3 +142,19 @@ connected/disconnected timeouts. Sleep stays off by default, is blocked on USB,
 and wakes through START or cable detection (checked once per second). Validate
 battery isolation and assembled-hardware wake before enabling it. Firmware
 without this capability rejects incompatible sleep-enabled imports.
+
+## Experimental Xbox 360 profiles
+
+Open **USB profiles...** to choose PC HID, experimental PS3 (dongle only), or
+experimental Xbox 360 Guitar Hero. The Controller must be connected directly by
+USB to change its own profile. Each device persists its selection independently.
+Older firmware without the new capability does not offer Xbox selection.
+
+Xbox mode permits identification and return to PC, not firmware installation,
+calibration or pairing changes. After changing modes, the app confirms the same
+USB serial before reporting success. Return through PC to select another console
+profile. If a switch times out, boot the device normally, hold BOOT for five
+seconds, then release to recover PC without erasing settings.
+
+Xbox 360/Guitar Hero 5 physical acceptance remains pending. Automated tests and
+successful enumeration on a computer must not be described as console validation.

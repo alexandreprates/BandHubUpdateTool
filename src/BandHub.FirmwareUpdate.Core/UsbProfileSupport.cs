@@ -8,6 +8,7 @@ public sealed record UsbProfileSupport(bool Gameplay, bool Battery, bool Managem
     public static UsbProfileSupport For(UsbProfile profile) => profile switch
     {
         UsbProfile.PcHid => new(true, true, true, true, true),
+        UsbProfile.Xbox360GuitarHero => new(true, false, false, false, true),
         UsbProfile.Ps3RockBandGuitar => new(true, false, false, false, true),
         _ => new(false, false, false, false, false),
     };

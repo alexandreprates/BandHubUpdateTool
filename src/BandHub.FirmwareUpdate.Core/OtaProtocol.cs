@@ -15,6 +15,7 @@ public enum UsbProfile : byte
 {
     PcHid = 1,
     Ps3RockBandGuitar = 2,
+    Xbox360GuitarHero = 3,
 }
 
 public enum OtaCommand : byte
@@ -82,6 +83,7 @@ public sealed class DeviceInfo
 
     public bool SupportsControllerOta => (Capabilities & 0x01) != 0;
     public bool SupportsDongleSelfOta => (Capabilities & 0x02) != 0;
+    public bool SupportsXbox360Profile => (Capabilities & 0x20) != 0;
     public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
     public bool SupportsLinkDiagnostics => (Capabilities & 0x10) != 0;
     public bool SupportsBindingManagement => (Capabilities & 0x08) != 0;
@@ -131,7 +133,7 @@ public static class OtaProtocol
         {
             throw new ArgumentOutOfRangeException(nameof(sessionId));
         }
-        if (profile != UsbProfile.PcHid && profile != UsbProfile.Ps3RockBandGuitar)
+        if (profile != UsbProfile.PcHid && profile != UsbProfile.Ps3RockBandGuitar && profile != UsbProfile.Xbox360GuitarHero)
         {
             throw new ArgumentOutOfRangeException(nameof(profile));
         }

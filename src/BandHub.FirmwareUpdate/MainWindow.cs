@@ -31,7 +31,7 @@ internal sealed class MainWindow : Window
     private readonly Gtk.Menu toolsMenu = new();
     private readonly MenuItem unpairControllerItem = new("Unpair Controller...");
     private readonly MenuItem unpairDongleItem = new("Unpair Dongle...");
-    private readonly MenuItem profileItem = new("Switch to PS3 profile...");
+    private readonly MenuItem profileItem = new("USB profiles...");
     private readonly Button cancelButton = new("Cancel") { Sensitive = false };
     private readonly DongleBindingService bindingService;
     private IReadOnlyList<DongleDescriptor> descriptors = Array.Empty<DongleDescriptor>();
@@ -57,6 +57,9 @@ internal sealed class MainWindow : Window
         root.PackStart(title, false, false, 0);
         root.PackStart(description, false, false, 0);
         root.PackStart(calibrationButton, false, false, 0);
+        var usbProfilesButton = new Button("USB profiles...");
+        usbProfilesButton.Clicked += (_, _) => OpenUsbProfiles();
+        root.PackStart(usbProfilesButton, false, false, 0);
         calibrationButton.Clicked += (_, _) => new ControllerCalibrationWindow(this).ShowAll();
 
         var selector = new Box(Orientation.Horizontal, 8);
@@ -199,63 +202,25 @@ internal sealed class MainWindow : Window
             BindingToolAvailability.CanUnpairController(descriptor);
         unpairDongleItem.Sensitive = idle &&
             BindingToolAvailability.CanUnpairDongle(descriptor);
-        profileItem.Label = descriptor?.UsbProfile == UsbProfile.Ps3RockBandGuitar
-            ? "Return to PC HID"
-            : "Switch to PS3 profile...";
+        profileItem.Label = "USB profiles...";
         profileItem.Sensitive = idle && descriptor?.CanSwitchUsbProfile == true;
         toolsButton.Sensitive = idle && descriptor != null &&
             (profileItem.Sensitive || unpairControllerItem.Sensitive ||
              unpairDongleItem.Sensitive);
     }
 
-    private async Task ChangeUsbProfileAsync()
+    private void OpenUsbProfiles()
     {
-        var descriptor = SelectedDescriptor();
-        if (descriptor == null || operation != null)
-        {
-            return;
-        }
-        var targetProfile = descriptor.UsbProfile == UsbProfile.Ps3RockBandGuitar
-            ? UsbProfile.PcHid
-            : UsbProfile.Ps3RockBandGuitar;
-        if (targetProfile == UsbProfile.Ps3RockBandGuitar &&
-            !ConfirmPs3ProfileSelection())
-        {
-            return;
-        }
+        if (operation != null) return;
+        var window = new UsbProfilesWindow(this);
+        window.Destroyed += async (_, _) => await RefreshAsync();
+        window.ShowAll();
+    }
 
-        operation = new CancellationTokenSource();
-        SetBusy(true, "Changing USB profile...");
-        AppendLog($"Changing USB profile to {UsbProfileName(targetProfile)}...");
-        try
-        {
-            var switched = await discovery.SwitchUsbProfileAsync(
-                descriptor,
-                targetProfile,
-                TimeSpan.FromSeconds(30),
-                operation.Token);
-            var discovered = await discovery.DiscoverAsync(operation.Token);
-            ReplaceDescriptors(
-                discovered,
-                switched.SerialNumber,
-                switched.DeviceInfo?.DongleMac);
-            AppendLog($"USB profile changed to {UsbProfileName(targetProfile)} successfully.");
-        }
-        catch (OperationCanceledException)
-        {
-            AppendLog("USB profile change cancelled.");
-        }
-        catch (Exception error)
-        {
-            ShowError(error);
-        }
-        finally
-        {
-            operation.Dispose();
-            operation = null;
-            SetBusy(false, "Idle");
-            ShowSelectedDevice();
-        }
+    private Task ChangeUsbProfileAsync()
+    {
+        OpenUsbProfiles();
+        return Task.CompletedTask;
     }
 
     private bool ConfirmPs3ProfileSelection()
@@ -592,6 +557,7 @@ internal sealed class MainWindow : Window
     {
         UsbProfile.PcHid => "PC HID",
         UsbProfile.Ps3RockBandGuitar => "PS3 Rock Band Guitar",
+        UsbProfile.Xbox360GuitarHero => "Xbox 360 Guitar Hero",
         _ => "unknown",
     };
 
