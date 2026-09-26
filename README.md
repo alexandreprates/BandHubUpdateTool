@@ -158,3 +158,22 @@ seconds, then release to recover PC without erasing settings.
 
 Xbox 360/Guitar Hero 5 physical acceptance remains pending. Automated tests and
 successful enumeration on a computer must not be described as console validation.
+
+## USB flash mode without board buttons
+
+Open **Tools > USB profiles**, select the directly connected Dongle or
+Controller, and choose **Enter USB flash mode**. Compatible PC HID and Xbox 360
+firmware advertise this capability; older firmware and PS3 mode leave the
+action disabled. Release Controller controls for one second before using it.
+The app rechecks identity/capability, waits for acknowledgement, and confirms
+that the application HID interface disconnected. Continue with USB flashing;
+the app does not infer a ROM serial port or install an image in this action.
+Saved profile, pairing and calibration are retained. Active updates prevent
+entry. For ordinary signed Dongle updates, return to PC HID and use the normal
+update flow instead.
+
+Older firmware must receive one update before software bootloader entry is
+available. The existing Dongle self-update flow can perform that bootstrap
+without board buttons. SuperMini Controller OTA remains unavailable; this
+feature does not add OTA target support. Physical bootloader entry for this
+new firmware remains to be validated on a flashed device.

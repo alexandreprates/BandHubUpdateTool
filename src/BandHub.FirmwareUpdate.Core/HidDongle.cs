@@ -19,6 +19,7 @@ public sealed class DongleDescriptor
     public UsbProfile UsbProfile { get; init; }
     public string SerialNumber { get; init; } = string.Empty;
     public bool CanSwitchUsbProfile { get; init; }
+    public bool CanEnterBootloader { get; init; }
 }
 
 public static class DongleDescriptorSelection
@@ -113,6 +114,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                     UsbProfile = profile,
                     SerialNumber = serialNumber,
                     CanSwitchUsbProfile = info.SupportsUsbProfileSwitch,
+                    CanEnterBootloader = info.SupportsUsbBootloader,
                 });
             }
             catch (Exception error) when (error is not OperationCanceledException)
@@ -155,7 +157,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         foreach (var device in UsbProfileManagement.DiscoverAsync(cancellationToken).GetAwaiter().GetResult().Where(x => x.Role == 2))
             results.Add(new DongleDescriptor { Path = device.Path, SerialNumber = device.Serial,
                 DisplayName = $"BandHub Xbox 360 Dongle {device.Serial}", UsbProfile = device.Profile,
-                Supported = false, CanSwitchUsbProfile = true,
+                Supported = false, CanSwitchUsbProfile = true, CanEnterBootloader = device.CanEnterBootloader,
                 UnsupportedReason = "Return to PC HID before updating firmware." });
         return results;
     }, cancellationToken);

@@ -8,7 +8,7 @@ using HidSharp;
 
 namespace BandHub.FirmwareUpdate.Core;
 
-public sealed record UsbProfileDevice(string Path, string Serial, byte Role, UsbProfile Profile, byte SupportedProfiles)
+public sealed record UsbProfileDevice(string Path, string Serial, byte Role, UsbProfile Profile, byte SupportedProfiles, bool CanEnterBootloader = false)
 {
     public bool Supports(UsbProfile target) => (byte)target is >= 1 and <= 3 && (SupportedProfiles & (1 << (byte)target)) != 0;
 }
@@ -32,7 +32,7 @@ public static class UsbProfileManagement
             (response[15] & ~0x0e) != 0 || (response[15] & 2) == 0 ||
             (expectedRole == 1 && (response[15] & 4) != 0))
             throw new InvalidDataException("Unsupported USB profile capabilities.");
-        return new(path, serial, expectedRole, expectedProfile, response[15]);
+        return new(path, serial, expectedRole, expectedProfile, response[15], (response[22] & 1) != 0);
     }
 
     public static async Task<IReadOnlyList<UsbProfileDevice>> DiscoverAsync(CancellationToken token)
@@ -55,6 +55,24 @@ public static class UsbProfileManagement
             catch (Exception error) when (error is IOException or InvalidOperationException or UnauthorizedAccessException or TimeoutException) { }
         }
         return result;
+    }
+
+    public static async Task EnterBootloaderAsync(UsbProfileDevice descriptor, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!descriptor.CanEnterBootloader)
+            throw new NotSupportedException("Update this device's firmware before using USB flash mode.");
+        var device = DeviceList.Local.GetHidDevices().FirstOrDefault(x => x.DevicePath == descriptor.Path)
+            ?? throw new IOException("The selected device disconnected.");
+        if (!MatchesIdentity(device.VendorID, device.ProductID, device.GetManufacturer(), device.GetProductName(), device.GetSerialNumber(), descriptor.Role, descriptor.Profile) ||
+            !string.Equals(device.GetSerialNumber(), descriptor.Serial, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Device identity changed. Refresh the list.");
+        var reply = await ExchangeAsync(device, 6, null, token).ConfigureAwait(false);
+        var current = ParseInfo(device.DevicePath, descriptor.Serial, reply, descriptor.Role, descriptor.Profile);
+        if (!current.CanEnterBootloader)
+            throw new NotSupportedException("The installed firmware does not support USB flash mode.");
+        // Acknowledge before disconnecting. A successful write alone is insufficient.
+        await ExchangeAsync(device, 8, null, token).ConfigureAwait(false);
     }
 
     public static async Task SendProfileAsync(UsbProfileDevice descriptor, UsbProfile target, CancellationToken token)

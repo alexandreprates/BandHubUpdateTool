@@ -33,6 +33,7 @@ public enum OtaCommand : byte
     SetUsbProfile = 11,
     UnpairController = 12,
     UnpairDongle = 13,
+    EnterBootloader = 14,
 }
 
 public enum OtaState : byte
@@ -83,6 +84,7 @@ public sealed class DeviceInfo
 
     public bool SupportsControllerOta => (Capabilities & 0x01) != 0;
     public bool SupportsDongleSelfOta => (Capabilities & 0x02) != 0;
+    public bool SupportsUsbBootloader => (Capabilities & 0x40) != 0;
     public bool SupportsXbox360Profile => (Capabilities & 0x20) != 0;
     public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
     public bool SupportsLinkDiagnostics => (Capabilities & 0x10) != 0;

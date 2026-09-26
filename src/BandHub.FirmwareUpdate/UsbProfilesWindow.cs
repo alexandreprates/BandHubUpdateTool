@@ -12,7 +12,7 @@ internal sealed class UsbProfilesWindow : Window
 {
     private sealed record Entry(string Label, UsbProfileDevice Device, DongleDescriptor? Dongle);
     private readonly ComboBoxText devices = new(), profiles = new();
-    private readonly Button refresh = new("Refresh"), apply = new("Apply profile");
+    private readonly Button refresh = new("Refresh"), apply = new("Apply profile"), bootloader = new("Enter USB flash mode");
     private readonly Label status = new("Connect the device directly to this computer. Each device stores its own profile.") { Xalign = 0, LineWrap = true };
     private readonly CancellationTokenSource lifetime = new();
     private readonly HidDongleDiscovery dongles = new();
@@ -29,6 +29,8 @@ internal sealed class UsbProfilesWindow : Window
             { Xalign = 0, LineWrap = true }, false, false, 0);
         var actions = new Box(Orientation.Horizontal, 8);
         actions.PackStart(refresh, false, false, 0); actions.PackEnd(apply, false, false, 0);
+        actions.PackStart(bootloader, false, false, 0);
+        bootloader.TooltipText = "Restart the selected device for USB flashing without pressing BOOT or RESET. Requires compatible firmware. Use PC HID for normal signed firmware updates.";
         root.PackStart(actions, false, false, 0); Add(root);
         devices.Changed += (_, _) => FillProfiles();
         refresh.Clicked += async (_, _) => await Run(RefreshAsync);
@@ -49,6 +51,17 @@ internal sealed class UsbProfilesWindow : Window
                 Ui(() => status.Text = $"Profile changed to {ProfileName(target)}. You can now connect the device to the target system.");
             });
         };
+        bootloader.Clicked += async (_, _) =>
+        {
+            if (devices.Active < 0 || devices.Active >= entries.Count) return;
+            var selected = entries[devices.Active].Device;
+            await Run(async () =>
+            {
+                await UsbBootloaderManagement.EnterAsync(selected, lifetime.Token);
+                await RefreshAsync();
+                Ui(() => status.Text = $"{selected.Serial}: flash mode acknowledged; the application disconnected. Continue with USB flashing. Saved profile, pairing and calibration were preserved.");
+            });
+        };
         Destroyed += (_, _) => { closed = true; lifetime.Cancel(); };
         _ = Run(RefreshAsync);
     }
@@ -56,7 +69,7 @@ internal sealed class UsbProfilesWindow : Window
     private async Task Run(Func<Task> action)
     {
         if (busy || closed) return;
-        busy = true; refresh.Sensitive = apply.Sensitive = devices.Sensitive = profiles.Sensitive = false;
+        busy = true; refresh.Sensitive = apply.Sensitive = bootloader.Sensitive = devices.Sensitive = profiles.Sensitive = false;
         try { await action(); }
         catch (OperationCanceledException) { }
         catch (Exception error) { Ui(() => status.Text = error.Message); }
@@ -69,7 +82,7 @@ internal sealed class UsbProfilesWindow : Window
         {
             if (!dongle.CanSwitchUsbProfile) continue;
             byte mask = dongle.UsbProfile == UsbProfile.Xbox360GuitarHero || dongle.DeviceInfo?.SupportsXbox360Profile == true ? (byte)14 : (byte)6;
-            var device = new UsbProfileDevice(dongle.Path, dongle.SerialNumber, 2, dongle.UsbProfile, mask);
+            var device = new UsbProfileDevice(dongle.Path, dongle.SerialNumber, 2, dongle.UsbProfile, mask, dongle.CanEnterBootloader);
             found.Add(new($"Dongle {device.Serial} — {ProfileName(device.Profile)}", device, dongle));
         }
         foreach (var device in (await UsbProfileManagement.DiscoverAsync(lifetime.Token)).Where(x => x.Role == 1))
@@ -85,13 +98,14 @@ internal sealed class UsbProfilesWindow : Window
     private void FillProfiles()
     {
         profiles.RemoveAll();
-        if (devices.Active < 0 || devices.Active >= entries.Count) { apply.Sensitive = profiles.Sensitive = false; return; }
+        if (devices.Active < 0 || devices.Active >= entries.Count) { apply.Sensitive = profiles.Sensitive = bootloader.Sensitive = false; return; }
         var current = entries[devices.Active].Device;
         foreach (var target in new[] { UsbProfile.PcHid, UsbProfile.Ps3RockBandGuitar, UsbProfile.Xbox360GuitarHero })
             if (current.Supports(target) && (current.Profile == UsbProfile.PcHid || target == UsbProfile.PcHid || target == current.Profile))
                 profiles.Append(((byte)target).ToString(), ProfileName(target));
         profiles.ActiveId = ((byte)current.Profile).ToString();
         apply.Sensitive = profiles.Sensitive = !busy;
+        bootloader.Sensitive = !busy && current.CanEnterBootloader;
     }
     private static string ProfileName(UsbProfile profile) => profile switch
     {
