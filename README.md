@@ -29,6 +29,44 @@ Current PS3-profile Dongles are detected and can be returned to PC HID from the
 `Tools` menu, but are not flashed while the PS3 profile is active.
 Legacy Dongles without the self-OTA agent remain unsupported.
 
+## Controller update connections
+
+Select **Wireless through Dongle** or **Direct USB Controller** before refreshing
+and choosing a device. Both paths install the same signed exact-model package.
+SuperMini GH3 (`controller-gh3-supermini`, 0x0104) and GH5
+(`controller-gh5-supermini`, 0x0103) have targets distinct from legacy ESP32
+controllers; packages are never interchangeable.
+
+Wireless updates retain **Update all**: USB-connected PC HID Dongle, paired
+Controller, ESP-NOW negotiation and temporary Wi-Fi/TCP transfer. The Dongle must
+run firmware that recognizes the SuperMini feature bit. If an older Dongle
+cannot identify it, use **Tools > Update Dongle only...**, then refresh. This
+explicit signed self-update loads only the Dongle catalog and does not flash
+the Controller. Legacy Controller wireless updates remain supported.
+
+Direct USB uses **Update Controller**, requires no Dongle or pairing, and loads
+only the Controller catalog. **Use local firmware...** accepts a signed `.bhfw`
+or `.bhrelease` bundle containing that Controller's signed manifest and package.
+Connect a USB data cable and return the Controller to PC HID using **USB
+profiles...** first. Firmware without the direct-update capability is listed
+with a first-installation explanation. Install the first compatible firmware
+with an external USB flashing tool; ROM recovery is not part of this flow.
+
+USB commands use reports 0x40/0x41/0x42 from
+`BandHubControllerUsbUpdate.h` in Shared. The updater checks the selected serial,
+model, version, capability and image health again before transfer. Session and
+offset acknowledgements permit identical command retries. Finish verifies the
+inactive image; Commit alone selects it for boot. Cancellation is available
+before Commit. After Commit, the app waits for the same serial and expected
+healthy firmware, even when the acknowledgement is lost or close is requested.
+A disconnect before Commit leaves the old firmware selected; retry starts from
+zero. Pairing, calibration and saved profile are preserved.
+
+Source implementation and host tests do not establish physical acceptance.
+GH3/GH5 updates on both connections, Windows/Linux HID behavior, transfer time,
+power-cut recovery and rollback must be recorded on real devices before a
+production rollout. No partition-table migration or ROM flashing is performed.
+
 ## USB profiles
 
 Current Dongle firmware contains the default PC HID identity and experimental
@@ -174,6 +212,7 @@ update flow instead.
 
 Older firmware must receive one update before software bootloader entry is
 available. The existing Dongle self-update flow can perform that bootstrap
-without board buttons. SuperMini Controller OTA remains unavailable; this
-feature does not add OTA target support. Physical bootloader entry for this
+without board buttons. Direct Controller USB updates and SuperMini wireless
+updates use the signed update flows above; entering ROM mode remains a separate
+recovery action. Physical bootloader entry for this
 new firmware remains to be validated on a flashed device.

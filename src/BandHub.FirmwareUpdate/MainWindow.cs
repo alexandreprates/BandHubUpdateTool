@@ -13,6 +13,13 @@ internal sealed class MainWindow : Window
     private readonly HidDongleDiscovery discovery = new();
     private readonly FirmwareUpdateService updateService;
     private readonly ComboBoxText dongles = new();
+    private readonly ComboBoxText transportChoice = new();
+    private readonly ControllerUsbDiscovery usbDiscovery = new();
+    private readonly Button usbProfilesButton = new("USB profiles...");
+    private IReadOnlyList<ControllerUpdateDescriptor> usbDescriptors = Array.Empty<ControllerUpdateDescriptor>();
+    private bool DirectUsb => transportChoice.Active == 1;
+    private bool busy;
+    private bool closeRequested;
     private readonly Label deviceSummary = new("Connect a BandHub Dongle and refresh.");
     private readonly Label controllerSummary = new(string.Empty);
     private readonly ProgressBar progress = new();
@@ -31,6 +38,8 @@ internal sealed class MainWindow : Window
     private readonly Gtk.Menu toolsMenu = new();
     private readonly MenuItem unpairControllerItem = new("Unpair Controller...");
     private readonly MenuItem unpairDongleItem = new("Unpair Dongle...");
+    private readonly MenuItem updateDongleItem = new("Update Dongle only...");
+    private bool updatingDongleOnly;
     private readonly MenuItem profileItem = new("USB profiles...");
     private readonly Button cancelButton = new("Cancel") { Sensitive = false };
     private readonly DongleBindingService bindingService;
@@ -49,7 +58,7 @@ internal sealed class MainWindow : Window
 
         var root = new Box(Orientation.Vertical, 12);
         var title = new Label { Markup = "<span size='xx-large' weight='bold'>BandHub Firmware Update</span>", Xalign = 0 };
-        var description = new Label("Update the Dongle and its paired Controller using signed stable releases.")
+        var description = new Label("Choose direct USB or wireless through a Dongle to install signed firmware.")
         {
             Xalign = 0,
             LineWrap = true,
@@ -57,18 +66,24 @@ internal sealed class MainWindow : Window
         root.PackStart(title, false, false, 0);
         root.PackStart(description, false, false, 0);
         root.PackStart(calibrationButton, false, false, 0);
-        var usbProfilesButton = new Button("USB profiles...");
+        transportChoice.AppendText("Wireless through Dongle");
+        transportChoice.AppendText("Direct USB Controller");
+        transportChoice.Active = 0;
+        root.PackStart(transportChoice, false, false, 0);
+        transportChoice.Changed += async (_, _) => await RefreshAsync();
         usbProfilesButton.Clicked += (_, _) => OpenUsbProfiles();
         root.PackStart(usbProfilesButton, false, false, 0);
         calibrationButton.Clicked += (_, _) => new ControllerCalibrationWindow(this).ShowAll();
 
         var selector = new Box(Orientation.Horizontal, 8);
-        selector.PackStart(new Label("Dongle:") { Xalign = 0 }, false, false, 0);
+        selector.PackStart(new Label("Device:") { Xalign = 0 }, false, false, 0);
         selector.PackStart(dongles, true, true, 0);
         selector.PackStart(refreshButton, false, false, 0);
         selector.PackStart(toolsButton, false, false, 0);
         root.PackStart(selector, false, false, 0);
 
+        toolsMenu.Append(updateDongleItem);
+        toolsMenu.Append(new SeparatorMenuItem());
         toolsMenu.Append(unpairControllerItem);
         toolsMenu.Append(unpairDongleItem);
         toolsMenu.Append(new SeparatorMenuItem());
@@ -79,7 +94,11 @@ internal sealed class MainWindow : Window
         var statusFrame = new Frame("Device status") { BorderWidth = 8 };
         var statusBox = new Box(Orientation.Vertical, 6) { BorderWidth = 10 };
         deviceSummary.Xalign = 0;
+        deviceSummary.LineWrap = true;
+        deviceSummary.MaxWidthChars = 78;
         controllerSummary.Xalign = 0;
+        controllerSummary.LineWrap = true;
+        controllerSummary.MaxWidthChars = 78;
         statusBox.PackStart(deviceSummary, false, false, 0);
         statusBox.PackStart(controllerSummary, false, false, 0);
         statusFrame.Add(statusBox);
@@ -101,7 +120,13 @@ internal sealed class MainWindow : Window
 
         DeleteEvent += (_, args) =>
         {
-            operation?.Cancel();
+            if (operation != null)
+            {
+                closeRequested = true;
+                operation.Cancel();
+                args.RetVal = true;
+                return;
+            }
             Application.Quit();
             args.RetVal = true;
         };
@@ -112,6 +137,12 @@ internal sealed class MainWindow : Window
         unpairDongleItem.Activated += async (_, _) =>
             await UnpairDongleAsync();
         profileItem.Activated += async (_, _) => await ChangeUsbProfileAsync();
+        updateDongleItem.Activated += async (_, _) =>
+        {
+            updatingDongleOnly = true;
+            try { await RunOnlineUpdateAsync(); }
+            finally { updatingDongleOnly = false; }
+        };
         updateButton.Clicked += async (_, _) => await RunOnlineUpdateAsync();
         localButton.Clicked += async (_, _) => await RunLocalUpdateAsync();
         cancelButton.Clicked += (_, _) => operation?.Cancel();
@@ -137,12 +168,21 @@ internal sealed class MainWindow : Window
         }
         var preferredSerial = SelectedDongleSerial();
         var preferredMac = SelectedDongleMac();
-        SetBusy(true, "Searching for Dongles...");
+        var usbSerial = SelectedUsbDescriptor()?.Serial;
+        SetBusy(true, DirectUsb ? "Searching for USB Controllers..." : "Searching for Dongles...");
         try
         {
-            var discovered = await discovery.DiscoverAsync(CancellationToken.None);
-            ReplaceDescriptors(discovered, preferredSerial, preferredMac);
-            AppendLog($"Found {descriptors.Count} BandHub Dongle interface(s).");
+            if (DirectUsb)
+            {
+                await RefreshUsbAsync(usbSerial);
+                AppendLog($"Found {usbDescriptors.Count} direct USB Controller interface(s).");
+            }
+            else
+            {
+                var discovered = await discovery.DiscoverAsync(CancellationToken.None);
+                ReplaceDescriptors(discovered, preferredSerial, preferredMac);
+                AppendLog($"Found {descriptors.Count} BandHub Dongle interface(s).");
+            }
         }
         catch (Exception error)
         {
@@ -157,6 +197,21 @@ internal sealed class MainWindow : Window
 
     private void ShowSelectedDevice()
     {
+        updateButton.Label = DirectUsb ? "Update Controller" : "Update all";
+        localButton.Label = DirectUsb ? "Use local firmware..." : "Use local bundle...";
+        if (DirectUsb)
+        {
+            var selected = SelectedUsbDescriptor();
+            deviceSummary.Text = selected == null ? "Connect a Controller directly by USB and refresh." :
+                $"{selected.Name} — serial {selected.Serial}";
+            controllerSummary.Text = selected?.Info is { } usbInfo
+                ? $"Firmware 0x{usbInfo.FirmwareVersion:X8} — {usbInfo.Health}. {selected.UnsupportedReason}"
+                : selected?.UnsupportedReason ?? string.Empty;
+            updateButton.Sensitive = !busy && operation == null && selected?.Supported == true;
+            localButton.Sensitive = updateButton.Sensitive;
+            UpdateToolsMenu();
+            return;
+        }
         var descriptor = SelectedDescriptor();
         if (descriptor == null)
         {
@@ -181,7 +236,10 @@ internal sealed class MainWindow : Window
         deviceSummary.Text =
             $"Dongle: {info.DongleTarget}, firmware 0x{info.DongleFirmwareVersion:X8}, " +
             $"USB profile {UsbProfileName(descriptor.UsbProfile)}";
-        controllerSummary.Text = !info.ControllerConnected
+        controllerSummary.Text = (info.ControllerFeatureFlags & (1U << 13)) != 0 &&
+                !OtaProtocol.IsSuperMiniTarget(info.ControllerTarget)
+            ? "This Dongle cannot identify SuperMini firmware. Use Tools > Update Dongle only, then refresh."
+            : !info.ControllerConnected
             ? "Controller: not connected"
             : !info.SupportsControllerPackageV2
                 ? $"Controller: firmware 0x{info.ControllerFirmwareVersion:X8} requires a wired bridge update"
@@ -196,7 +254,8 @@ internal sealed class MainWindow : Window
     private void UpdateToolsMenu()
     {
         var descriptor = SelectedDescriptor();
-        var idle = operation == null;
+        var idle = operation == null && !busy;
+        updateDongleItem.Sensitive = idle && descriptor?.Supported == true;
 
         unpairControllerItem.Sensitive = idle &&
             BindingToolAvailability.CanUnpairController(descriptor);
@@ -205,7 +264,7 @@ internal sealed class MainWindow : Window
         profileItem.Label = "USB profiles...";
         profileItem.Sensitive = idle && descriptor?.CanSwitchUsbProfile == true;
         toolsButton.Sensitive = idle && descriptor != null &&
-            (profileItem.Sensitive || unpairControllerItem.Sensitive ||
+            (updateDongleItem.Sensitive || profileItem.Sensitive || unpairControllerItem.Sensitive ||
              unpairDongleItem.Sensitive);
     }
 
@@ -304,6 +363,7 @@ internal sealed class MainWindow : Window
             operation = null;
             SetBusy(false, "Idle");
             ShowSelectedDevice();
+            if (closeRequested) Application.Quit();
         }
     }
 
@@ -363,7 +423,8 @@ internal sealed class MainWindow : Window
             FileChooserAction.Open,
             "Cancel", ResponseType.Cancel,
             "Open", ResponseType.Accept);
-        var filter = new FileFilter { Name = "BandHub release bundles (*.bhrelease)" };
+        var filter = new FileFilter { Name = DirectUsb ? "Signed Controller firmware (*.bhfw, *.bhrelease)" : "BandHub release bundles (*.bhrelease)" };
+        if (DirectUsb) filter.AddPattern("*.bhfw");
         filter.AddPattern("*.bhrelease");
         chooser.AddFilter(filter);
         if ((ResponseType)chooser.Run() != ResponseType.Accept)
@@ -376,8 +437,10 @@ internal sealed class MainWindow : Window
     private async Task RunUpdateAsync(IReleaseSource source)
     {
         var descriptor = SelectedDescriptor();
-        if (descriptor == null || operation != null)
+        var usbDescriptor = SelectedUsbDescriptor();
+        if ((DirectUsb ? usbDescriptor == null : descriptor == null) || operation != null)
         {
+            if (source is IDisposable unused) unused.Dispose();
             return;
         }
         operation = new CancellationTokenSource();
@@ -392,18 +455,19 @@ internal sealed class MainWindow : Window
             {
                 CloseControllerWakeDialog();
             }
+            if (value.Stage == "usb-commit") cancelButton.Sensitive = false;
             progress.Fraction = value.Percent / 100.0;
             progress.Text = $"{value.Percent}% — {value.Message}";
             AppendLog(value.Message);
         });
         try
         {
-            await updateService.UpdateAllAsync(
-                descriptor,
-                source,
-                ConfirmDevicesReadyAsync,
-                reporter,
-                operation.Token);
+            if (DirectUsb)
+                await new ControllerUsbUpdateService(usbDiscovery).UpdateAsync(
+                    usbDescriptor!, source, ConfirmDevicesReadyAsync, reporter, operation.Token);
+            else
+                await updateService.UpdateAllAsync(
+                    descriptor!, source, ConfirmDevicesReadyAsync, reporter, operation.Token, updatingDongleOnly);
             await RefreshAfterOperationAsync();
         }
         catch (OperationCanceledException)
@@ -427,6 +491,7 @@ internal sealed class MainWindow : Window
             operation = null;
             SetBusy(false, "Idle");
             ShowSelectedDevice();
+            if (closeRequested) Application.Quit();
         }
     }
 
@@ -451,8 +516,12 @@ internal sealed class MainWindow : Window
                     ButtonsType.None,
                     "Firmware download completed.");
                 dialog.Title = "Ready to install firmware";
-                dialog.SecondaryText =
-                    "Before continuing, make sure:\n\n" +
+                dialog.SecondaryText = DirectUsb
+                    ? "Keep the selected Controller connected directly by USB. Release all controls. " +
+                      "Pairing and calibration will be preserved. Cancellation is available until installation begins."
+                    : updatingDongleOnly
+                        ? "Keep the selected Dongle connected. Only the Dongle firmware will be updated; the Controller will not be flashed."
+                        : "Before continuing, make sure:\n\n" +
                     "• The Controller is powered on.\n" +
                     "• The Controller is paired and connected to the Dongle.\n" +
                     "• The Dongle remains connected to this computer.\n\n" +
@@ -514,6 +583,7 @@ internal sealed class MainWindow : Window
 
     private async Task RefreshAfterOperationAsync()
     {
+        if (DirectUsb) { await RefreshUsbAsync(SelectedUsbDescriptor()?.Serial); return; }
         var preferredSerial = SelectedDongleSerial();
         var preferredMac = SelectedDongleMac();
         var discovered = await discovery.DiscoverAsync(CancellationToken.None);
@@ -561,8 +631,21 @@ internal sealed class MainWindow : Window
         _ => "unknown",
     };
 
+    private async Task RefreshUsbAsync(string? preferredSerial)
+    {
+        usbDescriptors = await usbDiscovery.DiscoverAsync(CancellationToken.None);
+        dongles.RemoveAll();
+        foreach (var device in usbDescriptors) dongles.AppendText($"{device.Name} ({device.Serial})");
+        var index = usbDescriptors.ToList().FindIndex(d => d.Serial == preferredSerial);
+        dongles.Active = index >= 0 ? index : usbDescriptors.Count > 0 ? 0 : -1;
+    }
+
+    private ControllerUpdateDescriptor? SelectedUsbDescriptor() =>
+        DirectUsb && dongles.Active >= 0 && dongles.Active < usbDescriptors.Count ? usbDescriptors[dongles.Active] : null;
+
     private DongleDescriptor? SelectedDescriptor()
     {
+        if (DirectUsb) return null;
         var index = dongles.Active;
         return index >= 0 && index < descriptors.Count ? descriptors[index] : null;
     }
@@ -571,11 +654,14 @@ internal sealed class MainWindow : Window
         info.SupportsControllerOta && info.SupportsControllerPackageV2 &&
         info.ControllerBound && info.ControllerConnected &&
         info.ControllerFirmwareVersion != 0 &&
-        (info.ControllerTarget == FirmwareTarget.ControllerGh3 ||
-         info.ControllerTarget == FirmwareTarget.ControllerGh5);
+        OtaProtocol.IsControllerTarget(info.ControllerTarget) &&
+        (((info.ControllerFeatureFlags & (1U << 13)) != 0) == OtaProtocol.IsSuperMiniTarget(info.ControllerTarget));
 
     private void SetBusy(bool busy, string text, bool allowCancel = true)
     {
+        this.busy = busy;
+        transportChoice.Sensitive = !busy;
+        usbProfilesButton.Sensitive = !busy;
         calibrationButton.Sensitive = !busy;
         refreshButton.Sensitive = !busy;
         dongles.Sensitive = !busy;
@@ -583,6 +669,7 @@ internal sealed class MainWindow : Window
         updateButton.Sensitive = !busy && selected?.Supported == true &&
                                  selected.DeviceInfo != null &&
                                  ControllerIdentityReady(selected.DeviceInfo);
+        if (DirectUsb) updateButton.Sensitive = !busy && SelectedUsbDescriptor()?.Supported == true;
         localButton.Sensitive = updateButton.Sensitive;
         UpdateToolsMenu();
         cancelButton.Sensitive = busy && allowCancel && operation != null;

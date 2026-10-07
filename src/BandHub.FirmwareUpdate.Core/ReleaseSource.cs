@@ -43,6 +43,8 @@ public sealed class ReleaseArtifact
     {
         "controller-gh3" => FirmwareTarget.ControllerGh3,
         "controller-gh5" => FirmwareTarget.ControllerGh5,
+        "controller-gh3-supermini" => FirmwareTarget.ControllerGh3SuperMini,
+        "controller-gh5-supermini" => FirmwareTarget.ControllerGh5SuperMini,
         "dongle-devkit-pc" => FirmwareTarget.DongleDevKitPc,
         "dongle-zero-pc" => FirmwareTarget.DongleZeroPc,
         _ => throw new InvalidDataException($"Unknown release target '{Target}'."),
@@ -121,7 +123,7 @@ public sealed class ReleaseManifest
         foreach (var artifact in Artifacts)
         {
             var target = artifact.ParsedTarget;
-            var component = target is FirmwareTarget.ControllerGh3 or FirmwareTarget.ControllerGh5
+            var component = OtaProtocol.IsControllerTarget(target)
                 ? "controller"
                 : "dongle";
             var expectedAsset = SchemaVersion == 1
@@ -152,6 +154,10 @@ public sealed class ReleaseSelection
 public interface IReleaseSource
 {
     Task<ReleaseSelection> LoadAsync(DeviceInfo device, CancellationToken cancellationToken);
+    Task<ReleaseSelection> LoadDongleAsync(DeviceInfo device, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This release source does not support Dongle-only updates.");
+    Task<FirmwarePackage> LoadControllerAsync(ControllerUpdateInfo device, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This release source does not support direct USB updates.");
 }
 
 public sealed class CloudflareR2ReleaseSource : IReleaseSource, IDisposable
@@ -208,6 +214,30 @@ public sealed class CloudflareR2ReleaseSource : IReleaseSource, IDisposable
             controllerArtifact,
             donglePackage,
             controllerPackage);
+    }
+
+    public async Task<ReleaseSelection> LoadDongleAsync(DeviceInfo device, CancellationToken cancellationToken)
+    {
+        var manifest = await LoadManifestAsync("dongle", cancellationToken).ConfigureAwait(false);
+        var artifact = manifest.Find(device.DongleTarget);
+        var package = await LoadPackageAsync(artifact, cancellationToken).ConfigureAwait(false);
+        return ValidateSelection(device, manifest, null, artifact, null, package, null);
+    }
+
+    public async Task<FirmwarePackage> LoadControllerAsync(
+        ControllerUpdateInfo device, CancellationToken cancellationToken)
+    {
+        var manifest = await LoadManifestAsync("controller", cancellationToken).ConfigureAwait(false);
+        var package = await LoadPackageAsync(manifest.Find(device.Target), cancellationToken).ConfigureAwait(false);
+        ValidateControllerPackage(device, package);
+        return package;
+    }
+
+    internal static void ValidateControllerPackage(ControllerUpdateInfo device, FirmwarePackage package)
+    {
+        if (!OtaProtocol.IsSuperMiniTarget(device.Target) || package.Target != device.Target ||
+            package.ImageSize > device.MaximumImageSize)
+            throw new InvalidDataException("Controller package target or size does not match this USB device.");
     }
 
     public void Dispose() => client.Dispose();
@@ -391,6 +421,29 @@ public sealed class LocalBundleReleaseSource : IReleaseSource
             controllerArtifact,
             donglePackage,
             controllerPackage));
+    }
+
+    public Task<FirmwarePackage> LoadControllerAsync(ControllerUpdateInfo device, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        FirmwarePackage package;
+        if (Path.GetExtension(path).Equals(".bhfw", StringComparison.OrdinalIgnoreCase))
+        {
+            package = FirmwarePackage.ParseAndVerify(File.ReadAllBytes(path), publicKey);
+        }
+        else
+        {
+            using var archive = ZipFile.OpenRead(path);
+            var manifest = ReleaseManifest.ParseAndVerify(ReadEntry(archive, "release.json"),
+                ReadEntry(archive, "release.json.sig"), publicKey);
+            var artifact = manifest.Find(device.Target);
+            var bytes = ReadEntry(archive, artifact.Asset);
+            CloudflareR2ReleaseSource.ValidateArtifactBytes(artifact, bytes);
+            package = FirmwarePackage.ParseAndVerify(bytes, publicKey);
+            CloudflareR2ReleaseSource.ValidatePackageMetadata(artifact, package);
+        }
+        CloudflareR2ReleaseSource.ValidateControllerPackage(device, package);
+        return Task.FromResult(package);
     }
 
     private static byte[] ReadEntry(ZipArchive archive, string name)

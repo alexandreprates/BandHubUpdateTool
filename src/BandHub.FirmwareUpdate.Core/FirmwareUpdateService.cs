@@ -1,5 +1,6 @@
 using System;
 using System.Security.Cryptography;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -55,7 +56,8 @@ public sealed class FirmwareUpdateService
         IReleaseSource releaseSource,
         Func<CancellationToken, Task<bool>> confirmDevicesReadyAsync,
         IProgress<UpdateProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool dongleOnly = false)
     {
         var reporter = new UpdateProgressReporter(progress);
         ArgumentNullException.ThrowIfNull(confirmDevicesReadyAsync);
@@ -70,20 +72,31 @@ public sealed class FirmwareUpdateService
         {
             var info = await dongle.ReadDeviceInfoAsync(cancellationToken).ConfigureAwait(false);
             ValidateDevice(info);
+            var selectedInfo = descriptor.DeviceInfo
+                ?? throw new IOException("Dongle selection has no verified identity. Refresh and retry.");
+            if (info.DongleTarget != selectedInfo.DongleTarget ||
+                info.DongleFirmwareVersion != selectedInfo.DongleFirmwareVersion ||
+                info.DongleMac.Length != 6 ||
+                !CryptographicOperations.FixedTimeEquals(info.DongleMac, selectedInfo.DongleMac))
+                throw new IOException("The selected Dongle changed before opening. Refresh and retry.");
             var initialStatus = await dongle.ReadStatusAsync(cancellationToken)
                 .ConfigureAwait(false);
             var recoveredPreviousSession = RecoveryCommandFor(initialStatus.State) != null;
             await RecoverActiveSessionAsync(
                 dongle, initialStatus, reporter, cancellationToken).ConfigureAwait(false);
-            if (recoveredPreviousSession)
+            if (recoveredPreviousSession && !dongleOnly)
             {
                 info = await WaitForControllerIdentityAsync(
                     dongle, TimeSpan.FromSeconds(30), cancellationToken)
                     .ConfigureAwait(false);
             }
-            ValidateControllerIdentity(info);
+            if (!dongleOnly) ValidateControllerIdentity(info);
             reporter.Report("release", 0, "Checking the latest stable release...");
-            var release = await releaseSource.LoadAsync(info, cancellationToken).ConfigureAwait(false);
+            var release = dongleOnly
+                ? await releaseSource.LoadDongleAsync(info, cancellationToken).ConfigureAwait(false)
+                : await releaseSource.LoadAsync(info, cancellationToken).ConfigureAwait(false);
+            if (dongleOnly && release.ControllerPackage != null)
+                throw new InvalidOperationException("Dongle-only selection unexpectedly contains Controller firmware.");
 
             var updateController = release.ControllerPackage != null &&
                                    release.ControllerPackage.FirmwareVersion >
@@ -91,11 +104,14 @@ public sealed class FirmwareUpdateService
             var updateDongle = release.DonglePackage.FirmwareVersion > info.DongleFirmwareVersion;
             if (!updateController && !updateDongle)
             {
-                reporter.Report("complete", 100, "The Dongle and Controller are up to date.");
+                reporter.Report("complete", 100, dongleOnly ? "The Dongle is up to date." : "The Dongle and Controller are up to date.");
                 return;
             }
 
-            info = await ConfirmDevicesReadyAndRefreshAsync(
+            var originalDongleInfo = info;
+            info = dongleOnly
+                ? await ConfirmDongleReadyAsync(dongle, originalDongleInfo, confirmDevicesReadyAsync, cancellationToken).ConfigureAwait(false)
+                : await ConfirmDevicesReadyAndRefreshAsync(
                 dongle,
                 release.DonglePackage.Target,
                 release.ControllerPackage?.Target ?? info.ControllerTarget,
@@ -108,7 +124,7 @@ public sealed class FirmwareUpdateService
             updateDongle = release.DonglePackage.FirmwareVersion > info.DongleFirmwareVersion;
             if (!updateController && !updateDongle)
             {
-                reporter.Report("complete", 100, "The Dongle and Controller are up to date.");
+                reporter.Report("complete", 100, dongleOnly ? "The Dongle is up to date." : "The Dongle and Controller are up to date.");
                 return;
             }
             var expectedControllerMac = Array.Empty<byte>();
@@ -204,6 +220,20 @@ public sealed class FirmwareUpdateService
         {
             dongle?.Dispose();
         }
+    }
+
+    internal static async Task<DeviceInfo> ConfirmDongleReadyAsync(IDongleTransport transport,
+        DeviceInfo original, Func<CancellationToken, Task<bool>> confirm, CancellationToken token)
+    {
+        if (!await confirm(token).ConfigureAwait(false)) throw new OperationCanceledException(token);
+        token.ThrowIfCancellationRequested();
+        var refreshed = await transport.ReadDeviceInfoAsync(token).ConfigureAwait(false);
+        ValidateDevice(refreshed);
+        if (refreshed.DongleTarget != original.DongleTarget ||
+            refreshed.DongleFirmwareVersion != original.DongleFirmwareVersion ||
+            !CryptographicOperations.FixedTimeEquals(refreshed.DongleMac, original.DongleMac))
+            throw new IOException("Dongle identity changed. Refresh and retry.");
+        return refreshed;
     }
 
     internal static async Task<DeviceInfo> ConfirmDevicesReadyAndRefreshAsync(
@@ -532,10 +562,11 @@ public sealed class FirmwareUpdateService
 
     private static void ValidateControllerIdentity(DeviceInfo info)
     {
+        if ((info.ControllerFeatureFlags & (1U << 13)) != 0 && !OtaProtocol.IsSuperMiniTarget(info.ControllerTarget))
+            throw new NotSupportedException("Update the Dongle firmware to a SuperMini-aware release before wireless Controller updates.");
         if (!info.SupportsControllerOta || !info.ControllerBound ||
             !info.ControllerConnected || info.ControllerFirmwareVersion == 0 ||
-            (info.ControllerTarget != FirmwareTarget.ControllerGh3 &&
-             info.ControllerTarget != FirmwareTarget.ControllerGh5))
+            !OtaProtocol.IsControllerTarget(info.ControllerTarget))
         {
             throw new InvalidOperationException(
                 "A supported paired Controller must be connected before checking updates.");
@@ -631,8 +662,7 @@ public sealed class FirmwareUpdateService
         info.SupportsControllerOta && info.ControllerBound &&
         info.ControllerConnected &&
         info.ControllerFirmwareVersion != 0 &&
-        (info.ControllerTarget == FirmwareTarget.ControllerGh3 ||
-         info.ControllerTarget == FirmwareTarget.ControllerGh5);
+        OtaProtocol.IsControllerTarget(info.ControllerTarget);
 
     private static void EnsureNoDeviceError(OtaStatus status)
     {

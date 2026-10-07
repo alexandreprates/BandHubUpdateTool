@@ -32,7 +32,7 @@ public sealed class ReleaseSourceTests
         FixtureCurve.GetSeed());
     private static readonly ECPrivateKeyParameters FixtureSigningKey =
         new(BigInteger.One, FixtureDomain);
-    private static readonly byte[] FixturePublicKey =
+    internal static readonly byte[] FixturePublicKey =
         FixtureCurve.G.Multiply(BigInteger.One).Normalize().GetEncoded(false);
 
     [Test]
@@ -144,6 +144,93 @@ public sealed class ReleaseSourceTests
             new CloudflareR2ReleaseSource(client, endpoint));
 
         Assert.That(error?.Message, Does.Contain("S3 endpoint"));
+    }
+
+    [TestCase(FirmwareTarget.ControllerGh3SuperMini, "controller-gh3-supermini")]
+    [TestCase(FirmwareTarget.ControllerGh5SuperMini, "controller-gh5-supermini")]
+    public async Task DirectUsbCatalogNeverRequestsDongle(FirmwareTarget target, string targetName)
+    {
+        var package = BuildPackage(target, 0x00100000);
+        var manifest = BuildComponentManifest("controller", "1.4.0", targetName, package, 0x00100000);
+        const string baseUrl = "https://firmware.example.test/";
+        var responses = new Dictionary<string, byte[]>
+        {
+            [baseUrl + "controller/release.json"] = manifest,
+            [baseUrl + "controller/release.json.sig"] = Sign(manifest),
+            [baseUrl + $"controller/1.4.0/{targetName}.bhfw"] = package,
+        };
+        var handler = new StaticResponseHandler(responses);
+        using var source = new CloudflareR2ReleaseSource(new HttpClient(handler), baseUrl, FixturePublicKey);
+        var info = new ControllerUpdateInfo("D88B499205D4", target, 0xf0000, 0x140000, true, ControllerImageHealth.Healthy);
+        var actual = await source.LoadControllerAsync(info, CancellationToken.None);
+        Assert.That(actual.Target, Is.EqualTo(target));
+        Assert.That(handler.RequestedUris, Is.EquivalentTo(responses.Keys));
+    }
+
+    [Test]
+    public async Task DirectUsbLocalBundleNeedsOnlyControllerAndEnforcesModel()
+    {
+        var package = BuildPackage(FirmwareTarget.ControllerGh3SuperMini, 0x00100000);
+        var manifest = BuildComponentManifest("controller", "1.4.0", "controller-gh3-supermini", package, 0x00100000);
+        var path = Path.GetTempFileName();
+        try
+        {
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+            {
+                WriteEntry(archive, "release.json", manifest);
+                WriteEntry(archive, "release.json.sig", Sign(manifest));
+                WriteEntry(archive, "controller/1.4.0/controller-gh3-supermini.bhfw", package);
+            }
+            var info = new ControllerUpdateInfo("D88B499205D4", FirmwareTarget.ControllerGh3SuperMini, 0xf0000, 0x140000, true, ControllerImageHealth.Healthy);
+            var source = new LocalBundleReleaseSource(path, FixturePublicKey);
+            Assert.That((await source.LoadControllerAsync(info, CancellationToken.None)).Target, Is.EqualTo(info.Target));
+            Assert.ThrowsAsync<InvalidDataException>(async () => await source.LoadControllerAsync(
+                info with { Target = FirmwareTarget.ControllerGh5SuperMini }, CancellationToken.None));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Test]
+    public async Task DongleOnlyCatalogNeverRequestsController()
+    {
+        var package = BuildPackage(FirmwareTarget.DongleZeroPc, 0x100000);
+        var manifest = BuildComponentManifest("dongle", "1.4.0", "dongle-zero-pc", package, 0x100000);
+        const string baseUrl = "https://firmware.example.test/";
+        var responses = new Dictionary<string, byte[]>
+        {
+            [baseUrl + "dongle/release.json"] = manifest,
+            [baseUrl + "dongle/release.json.sig"] = Sign(manifest),
+            [baseUrl + "dongle/1.4.0/dongle-zero-pc.bhfw"] = package,
+        };
+        var handler = new StaticResponseHandler(responses);
+        using var source = new CloudflareR2ReleaseSource(new HttpClient(handler), baseUrl, FixturePublicKey);
+        var actual = await source.LoadDongleAsync(SupportedDevice(), CancellationToken.None);
+        Assert.That(actual.ControllerPackage, Is.Null);
+        Assert.That(handler.RequestedUris, Is.EquivalentTo(responses.Keys));
+    }
+
+    [Test]
+    public async Task DirectUsbRawPackageRejectsCorruptedImageAndUntrustedSignature()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".bhfw");
+        var package = BuildPackage(FirmwareTarget.ControllerGh3SuperMini, 0x100000);
+        var info = new ControllerUpdateInfo("D88B499205D4", FirmwareTarget.ControllerGh3SuperMini,
+            0xf0000, 0x140000, true, ControllerImageHealth.Healthy);
+        try
+        {
+            File.WriteAllBytes(path, package);
+            var source = new LocalBundleReleaseSource(path, FixturePublicKey);
+            Assert.That((await source.LoadControllerAsync(info, CancellationToken.None)).Bytes, Is.EqualTo(package));
+            var corrupt = package.ToArray(); corrupt[^1] ^= 1; File.WriteAllBytes(path, corrupt);
+            Assert.ThrowsAsync<InvalidDataException>(() => source.LoadControllerAsync(info, CancellationToken.None));
+            corrupt = package.ToArray(); corrupt[60] ^= 1;
+            WriteUInt32(corrupt, 124, Crc32(corrupt, 124)); File.WriteAllBytes(path, corrupt);
+            Assert.ThrowsAsync<InvalidDataException>(() => source.LoadControllerAsync(info, CancellationToken.None));
+            File.WriteAllBytes(path, package);
+            Assert.ThrowsAsync<InvalidDataException>(() => source.LoadControllerAsync(
+                info with { MaximumImageSize = 128 }, CancellationToken.None));
+        }
+        finally { File.Delete(path); }
     }
 
     private static DeviceInfo SupportedDevice() => new()
@@ -258,7 +345,7 @@ public sealed class ReleaseSourceTests
         target,
     };
 
-    private static byte[] BuildPackage(FirmwareTarget target, uint firmwareVersion)
+    internal static byte[] BuildPackage(FirmwareTarget target, uint firmwareVersion)
     {
         var image = new byte[256];
         var markerOffset = 32;

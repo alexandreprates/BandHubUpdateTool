@@ -367,6 +367,59 @@ public sealed class FirmwareUpdateServiceTests
         Assert.That(error?.Message, Does.Contain("Controller changed"));
     }
 
+    [Test]
+    public async Task DongleOnlyCanLoadReleaseWithoutSupportedController()
+    {
+        var info = SupportedDevice(controllerFeatures: 1U << 13, controllerTarget: FirmwareTarget.ControllerGh3);
+        var transport = new FakeTransport(info);
+        transport.Statuses.Enqueue(new OtaStatus { State = OtaState.Idle });
+        var service = new FirmwareUpdateService(new FakeDiscovery(transport));
+        var source = new DongleOnlySource();
+        await service.UpdateAllAsync(transport.Descriptor, source, _ => Task.FromResult(true), null,
+            CancellationToken.None, dongleOnly: true);
+        Assert.That(source.Loaded, Is.True);
+        Assert.That(transport.Commands, Is.Empty);
+    }
+
+    [Test]
+    public async Task DongleOnlyConfirmationValidatesDongleIdentityWithoutController()
+    {
+        var original = SupportedDevice(controllerTarget: 0, controllerFirmwareVersion: 0, flags: 0);
+        var transport = new FakeTransport(original);
+        var accepted = await FirmwareUpdateService.ConfirmDongleReadyAsync(transport, original,
+            _ => Task.FromResult(true), CancellationToken.None);
+        Assert.That(accepted, Is.SameAs(original));
+        transport.NextDeviceInfos.Enqueue(SupportedDevice(dongleMac: new byte[] { 9, 8, 7, 6, 5, 4 }));
+        Assert.ThrowsAsync<System.IO.IOException>(() => FirmwareUpdateService.ConfirmDongleReadyAsync(
+            transport, original, _ => Task.FromResult(true), CancellationToken.None));
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void ReusedDonglePathCannotUpdateDifferentDevice(bool dongleOnly)
+    {
+        var replacement = new FakeTransport(SupportedDevice(dongleMac: new byte[] { 9, 8, 7, 6, 5, 4 }));
+        var selected = new FakeTransport(SupportedDevice()).Descriptor;
+        var service = new FirmwareUpdateService(new FakeDiscovery(replacement));
+        Assert.ThrowsAsync<System.IO.IOException>(() => service.UpdateAllAsync(selected,
+            new RejectIfLoadedReleaseSource(), _ => Task.FromResult(true), null,
+            CancellationToken.None, dongleOnly));
+        Assert.That(replacement.Commands, Is.Empty);
+    }
+
+    private sealed class DongleOnlySource : IReleaseSource
+    {
+        public bool Loaded;
+        public Task<ReleaseSelection> LoadAsync(DeviceInfo device, CancellationToken token) =>
+            throw new AssertionException("Dongle bootstrap must not select Controller artifacts.");
+        public Task<ReleaseSelection> LoadDongleAsync(DeviceInfo device, CancellationToken token)
+        {
+            Loaded = true;
+            return Task.FromResult(new ReleaseSelection { DonglePackage = FirmwarePackage.ParseAndVerify(
+                ReleaseSourceTests.BuildPackage(FirmwareTarget.DongleZeroPc, 0x20000), ReleaseSourceTests.FixturePublicKey) });
+        }
+    }
+
     private static DongleDescriptor Descriptor(string path, byte[] mac) => new()
     {
         Path = path,

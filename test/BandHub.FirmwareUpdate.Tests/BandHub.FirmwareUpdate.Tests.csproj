@@ -11,4 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/BandHub.FirmwareUpdate.Core/BandHub.FirmwareUpdate.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures/controller_usb_update_vectors.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

@@ -7,6 +7,8 @@ public enum FirmwareTarget : uint
     LegacyController = 1,
     ControllerGh3 = 0x0101,
     ControllerGh5 = 0x0102,
+    ControllerGh5SuperMini = 0x0103,
+    ControllerGh3SuperMini = 0x0104,
     DongleDevKitPc = 0x0201,
     DongleZeroPc = 0x0202,
 }
@@ -102,6 +104,13 @@ public sealed class DeviceInfo
 
 public static class OtaProtocol
 {
+    public static bool IsControllerTarget(FirmwareTarget target) => target is
+        FirmwareTarget.ControllerGh3 or FirmwareTarget.ControllerGh5 or
+        FirmwareTarget.ControllerGh3SuperMini or FirmwareTarget.ControllerGh5SuperMini;
+
+    public static bool IsSuperMiniTarget(FirmwareTarget target) => target is
+        FirmwareTarget.ControllerGh3SuperMini or FirmwareTarget.ControllerGh5SuperMini;
+
     private static readonly byte[] Ps3ReturnToPcPayload =
     {
         0x42, 0x48, 0x55, 0x53, 0x42, 0x50, 0x43, 0x01,
