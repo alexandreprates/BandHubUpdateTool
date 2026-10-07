@@ -174,7 +174,8 @@ public sealed class ControllerUsbUpdateTests
     private static Task Run(FakeDevice device, FirmwarePackage package, CancellationToken token = default,
         Func<CancellationToken, Task<bool>>? confirm = null) => new ControllerUsbUpdateService(device)
         {
-            CommandTimeout = TimeSpan.FromMilliseconds(30), ReconnectTimeout = TimeSpan.FromMilliseconds(30),
+            // Allow retries to cross multiple Windows timer ticks, including CI scheduling delays.
+            CommandTimeout = TimeSpan.FromSeconds(2), ReconnectTimeout = TimeSpan.FromMilliseconds(30),
             PollInterval = TimeSpan.FromMilliseconds(1), RetryInterval = TimeSpan.FromMilliseconds(5),
         }.UpdateAsync(Descriptor, new Source(package), confirm ?? (_ => Task.FromResult(true)), null, token);
 
