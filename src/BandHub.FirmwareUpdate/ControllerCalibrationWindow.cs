@@ -12,7 +12,9 @@ namespace BandHub.FirmwareUpdate;
 internal sealed class ControllerCalibrationWindow : Window
 {
     private readonly ComboBoxText devices = new();
-    private readonly Label status = new("Connect the Controller directly by USB, then refresh.") { Xalign = 0, LineWrap = true };
+    private readonly ComboBoxText connectionChoice = new();
+    private readonly Button connect = new("Connect");
+    private readonly Label status = new("Choose direct USB or wireless through a Dongle.") { Xalign = 0, LineWrap = true };
     private readonly Label live = new("Waiting for diagnostics.") { Xalign = 0, Selectable = true };
     private readonly SpinButton rest = new(0, 4095, 1), full = new(0, 4095, 1);
     private readonly SpinButton deadband = new(0, 32, 1), release = new(1, 20, 1), guard = new(0, 10, 1);
@@ -28,14 +30,19 @@ internal sealed class ControllerCalibrationWindow : Window
     private long lastSample;
     private readonly uint timer;
 
-    public ControllerCalibrationWindow(Window parent) : base("Controller diagnostics and calibration")
+    public ControllerCalibrationWindow(Window parent, bool wireless = false, string? preferredPath = null)
+        : base("Controller calibration and settings")
     {
         TransientFor = parent; Modal = true; DefaultWidth = 640; DefaultHeight = 490; BorderWidth = 16;
         var root = new Box(Orientation.Vertical, 10);
-        root.PackStart(new Label("1. Connect by USB.  2. Capture whammy endpoints.  3. Release controls and save.")
+        root.PackStart(new Label("1. Choose USB or Dongle.  2. Capture whammy endpoints.  3. Release controls and save.")
             { Xalign = 0, LineWrap = true }, false, false, 0);
+        connectionChoice.AppendText("Direct USB Controller");
+        connectionChoice.AppendText("Wireless through Dongle");
+        connectionChoice.Active = wireless ? 1 : 0;
+        root.PackStart(connectionChoice, false, false, 0);
         var selector = new Box(Orientation.Horizontal, 8);
-        var refresh = new Button("Refresh"); var connect = new Button("Connect");
+        var refresh = new Button("Refresh");
         selector.PackStart(devices, true, true, 0); selector.PackStart(refresh, false, false, 0); selector.PackStart(connect, false, false, 0);
         root.PackStart(selector, false, false, 0); root.PackStart(status, false, false, 0); root.PackStart(live, false, false, 0);
         var grid = new Grid { RowSpacing = 8, ColumnSpacing = 12 };
@@ -58,26 +65,52 @@ internal sealed class ControllerCalibrationWindow : Window
         var import = new Button("Import..."); var export = new Button("Export...");
         foreach (var button in new[] { save, reset, import, export }) actions.PackStart(button, false, false, 0);
         settings.PackStart(actions, false, false, 0); root.PackStart(settings, false, false, 0); Add(root);
-        refresh.Clicked += async (_, _) => await Run(async () =>
+        async Task RefreshDevices()
         {
-            var found = await Task.Run(ControllerManagement.Discover, lifetime.Token);
-            Ui(() => { discovered = found; devices.RemoveAll(); foreach (var item in found) devices.AppendText(item.Name); devices.Active = found.Count > 0 ? 0 : -1; });
-        });
+            connection?.Dispose(); connection = null; lastSample = 0;
+            var found = connectionChoice.Active == 1
+                ? await ControllerManagement.DiscoverWirelessAsync(lifetime.Token)
+                : await Task.Run(ControllerManagement.Discover, lifetime.Token);
+            Ui(() =>
+            {
+                discovered = found; devices.RemoveAll();
+                foreach (var item in found) devices.AppendText(item.Name);
+                var preferred = -1;
+                for (var i = 0; i < found.Count; ++i) if (found[i].Path == preferredPath) preferred = i;
+                devices.Active = preferred >= 0 ? preferred : found.Count > 0 ? 0 : -1;
+                status.Text = found.Count == 0
+                    ? connectionChoice.Active == 1 ? "No Dongle found. Connect a PC HID Dongle and turn on the paired Controller." : "No Controller found. Connect the Controller by USB and refresh."
+                    : found[devices.Active].Supported ? "Select the Controller and click Connect to read its settings." : found[devices.Active].UnsupportedReason;
+            });
+        }
+        refresh.Clicked += async (_, _) => await Run(RefreshDevices);
+        connectionChoice.Changed += async (_, _) => await Run(RefreshDevices);
+        devices.Changed += (_, _) =>
+        {
+            connection?.Dispose(); connection = null; lastSample = 0; settings.Sensitive = false;
+            if (devices.Active >= 0 && devices.Active < discovered.Count)
+            {
+                var selected = discovered[devices.Active];
+                connect.Sensitive = !busy && selected.Supported;
+                if (!selected.Supported) status.Text = selected.UnsupportedReason;
+            }
+        };
         connect.Clicked += async (_, _) =>
         {
             if (busy || devices.Active < 0) return;
-            var path = discovered[devices.Active].Path;
+            var selected = discovered[devices.Active];
+            if (!selected.Supported) { status.Text = selected.UnsupportedReason; return; }
             await Run(async () =>
             {
                 connection?.Dispose(); connection = null;
-                var candidate = new ControllerManagement(path);
+                var candidate = new ControllerManagement(selected);
                 try
                 {
                     await candidate.ConnectAsync(lifetime.Token);
                     var value = await candidate.ReadAsync(lifetime.Token);
                     connection = candidate;
                     var profile = candidate.Profile;
-                    Ui(() => { ShowValue(value); status.Text = $"GH{profile} connected. Diagnostics refresh four times per second."; });
+                    Ui(() => { ShowValue(value); status.Text = $"GH{profile} connected {(selected.Dongle != null ? "through Dongle" : "by USB")}. Diagnostics refresh four times per second."; });
                 }
                 catch { candidate.Dispose(); throw; }
             });
@@ -101,6 +134,7 @@ internal sealed class ControllerCalibrationWindow : Window
         DeleteEvent += (_, _) => CloseConnection();
         Destroyed += (_, _) => CloseConnection();
         ShowValue(current);
+        Shown += async (_, _) => await Run(RefreshDevices);
     }
     private void CloseConnection()
     {
@@ -114,11 +148,14 @@ internal sealed class ControllerCalibrationWindow : Window
     {
         if (busy || closed) return;
         busy = true;
+        connectionChoice.Sensitive = devices.Sensitive = connect.Sensitive = false;
         try { await action(); }
         catch (OperationCanceledException) { }
         catch (IOException error) { connection?.Dispose(); connection = null; Ui(() => status.Text = error.Message); }
         catch (Exception error) { Ui(() => status.Text = error.Message); }
-        finally { Ui(() => { busy = false; settings.Sensitive = connection?.Profile is 3 or 5;
+        finally { Ui(() => { busy = false; connectionChoice.Sensitive = devices.Sensitive = true;
+            connect.Sensitive = devices.Active >= 0 && devices.Active < discovered.Count && discovered[devices.Active].Supported;
+            settings.Sensitive = connection?.Profile is 3 or 5;
             sleep.Sensitive = disconnectedSleep.Sensitive = connectedSleep.Sensitive = connection?.CanSleep == true; }); }
     }
     private void Capture(SpinButton field)
@@ -148,7 +185,7 @@ internal sealed class ControllerCalibrationWindow : Window
         var rawValue = BinaryPrimitives.ReadUInt16LittleEndian(d.Span[12..]);
         var text = $"Raw whammy: {rawValue}    Calibrated: {d.Span[14]}    GH5 neck: {(d.Span[15] != 0 ? "connected" : "absent")}\n" +
             $"Frets/strum: 0x{BinaryPrimitives.ReadUInt32LittleEndian(d.Span[8..]):X8}    Body: 0x{BinaryPrimitives.ReadUInt32LittleEndian(d.Span[4..]):X8}\n" +
-            $"USB queued: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[16..])}    Delivered: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[20..])}    Dropped: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[24..])}\n" +
+            $"Transport queued: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[16..])}    Delivered: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[20..])}    Dropped: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[24..])}\n" +
             $"Overflows: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[28..])}    Expired: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[32..])}    Max queue age: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[36..])} ms\n" +
             $"GH5 read errors: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[40..])}    Max acquisition: {BinaryPrimitives.ReadUInt32LittleEndian(d.Span[44..])} µs";
         Ui(() => { raw = rawValue; lastSample = Environment.TickCount64; live.Text = text; });

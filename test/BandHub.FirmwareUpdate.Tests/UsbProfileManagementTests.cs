@@ -10,6 +10,15 @@ namespace BandHub.FirmwareUpdate.Tests;
 
 public sealed class UsbProfileManagementTests
 {
+    [TestCase(null, "BandHub GH5 SuperMini", "AABBCCDDEEFF")]
+    [TestCase("BandHub", null, "AABBCCDDEEFF")]
+    [TestCase("BandHub", "BandHub GH5 SuperMini", null)]
+    public void MissingUsbStringsAreIgnored(string? manufacturer, string? product, string? serial)
+    {
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, manufacturer,
+            product, serial, 1, UsbProfile.PcHid), Is.False);
+    }
+
     [TestCase("BandHub GH3 SuperMini")]
     [TestCase("BandHub GH5 SuperMini")]
     [TestCase("TinyUSB HID")]

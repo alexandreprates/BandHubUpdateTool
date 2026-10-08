@@ -24,7 +24,7 @@ internal sealed class MainWindow : Window
     private readonly Label controllerSummary = new(string.Empty);
     private readonly ProgressBar progress = new();
     private readonly TextView log = new() { Editable = false, WrapMode = WrapMode.WordChar };
-    private readonly Button calibrationButton = new("Controller diagnostics...");
+    private readonly Button calibrationButton = new("Controller calibration and settings...");
     private readonly Button refreshButton = new("Refresh");
     private readonly Button updateButton = new("Update all") { Sensitive = false };
     private readonly Button localButton = new("Use local bundle...") { Sensitive = false };
@@ -73,7 +73,8 @@ internal sealed class MainWindow : Window
         transportChoice.Changed += async (_, _) => await RefreshAsync();
         usbProfilesButton.Clicked += (_, _) => OpenUsbProfiles();
         root.PackStart(usbProfilesButton, false, false, 0);
-        calibrationButton.Clicked += (_, _) => new ControllerCalibrationWindow(this).ShowAll();
+        calibrationButton.Clicked += (_, _) => new ControllerCalibrationWindow(this, !DirectUsb,
+            DirectUsb ? SelectedUsbDescriptor()?.Path : SelectedDescriptor()?.Path).ShowAll();
 
         var selector = new Box(Orientation.Horizontal, 8);
         selector.PackStart(new Label("Device:") { Xalign = 0 }, false, false, 0);

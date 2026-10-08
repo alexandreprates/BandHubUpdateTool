@@ -94,7 +94,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             var serialNumber = ReadSerialNumber(device);
             try
             {
-                if (device.GetProductName().StartsWith("BandHub Xbox 360", StringComparison.Ordinal)) continue;
+                if (device.GetProductName()?.StartsWith("BandHub Xbox 360", StringComparison.Ordinal) == true) continue;
                 using var transport = OpenDevice(device);
                 var info = transport.ReadDeviceInfoAsync(cancellationToken).GetAwaiter().GetResult();
                 var profile = ParseUsbProfile(info.UsbProfile);

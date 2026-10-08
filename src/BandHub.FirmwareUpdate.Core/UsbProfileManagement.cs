@@ -15,9 +15,9 @@ public sealed record UsbProfileDevice(string Path, string Serial, byte Role, Usb
 
 public static class UsbProfileManagement
 {
-    public static bool MatchesIdentity(int vendor, int product, string manufacturer, string name, string serial, byte role, UsbProfile profile)
+    public static bool MatchesIdentity(int vendor, int product, string? manufacturer, string? name, string? serial, byte role, UsbProfile profile)
     {
-        if (manufacturer != "BandHub" || serial.Length != 12 || !serial.All(char.IsAsciiHexDigit)) return false;
+        if (manufacturer != "BandHub" || serial?.Length != 12 || !serial.All(char.IsAsciiHexDigit)) return false;
         if (profile == UsbProfile.Xbox360GuitarHero)
             return vendor == 0x1209 && product == 0x2882 &&
                 name == (role == 1 ? "BandHub Xbox 360 Guitar" : role == 2 ? "BandHub Xbox 360 Dongle" : "");
@@ -46,7 +46,7 @@ public static class UsbProfileManagement
             if (device.VendorID != 0x303a && device.VendorID != 0x1209) continue;
             try
             {
-                var name = device.GetProductName(); var serial = device.GetSerialNumber();
+                var name = device.GetProductName() ?? string.Empty; var serial = device.GetSerialNumber() ?? string.Empty;
                 var profile = name.StartsWith("BandHub Xbox 360", StringComparison.Ordinal) ? UsbProfile.Xbox360GuitarHero : UsbProfile.PcHid;
                 byte role = name == "BandHub Xbox 360 Dongle" ? (byte)2 : (byte)1;
                 if (!MatchesIdentity(device.VendorID, device.ProductID, device.GetManufacturer(), name, serial, role, profile) ||

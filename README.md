@@ -166,13 +166,29 @@ or distribution trust warnings until platform signing is configured.
 
 ## Controller diagnostics and calibration
 
-Use **Controller diagnostics...** with a Controller connected directly by USB.
+Use **Controller calibration and settings...** with a Controller connected directly
+by USB or wirelessly through its paired PC HID Dongle. The window follows the
+connection selected on the main screen, discovers devices when opened, and also
+lets you change the connection. Select the Controller and click **Connect**.
+Wireless access requires updated firmware on both devices: the Dongle advertises
+management capability 0x80 and the Controller advertises feature bit 14. Older
+firmware stays listed with instructions identifying which device needs an update.
+USB console-profile changes and ROM flash mode still require direct USB.
+
+Wireless read, save, reset, diagnostics and sleep settings use the same validated
+management reports as USB. The relay checks the binding and selected Controller
+identity, retries lost radio requests without repeating the current save, and
+rejects writes during firmware updates or until controls have been idle for one
+second. Firmware sources in BandHubController, BandHubDongle and their shared
+BandHubProtocol module must be updated together before using this path. Physical
+wireless calibration acceptance must be recorded on updated devices.
+
 Refresh and choose its serial identity, capture the resting and full whammy ADC
 values, then release digital controls and leave analog controls stable for one
 second before saving. Inversion follows endpoint order. Debounce settings have
 firmware-enforced bounds. **Restore defaults** persists the original values.
 
-The live panel shows raw/calibrated whammy, input masks and USB queue counters.
+The live panel shows raw/calibrated whammy, input masks and USB or radio queue counters.
 Import/export uses version 1 JSON for the selected GH3/GH5 assembly; import edits
 a draft and Save applies it. A failed save keeps the previous runtime values.
 Production Controller firmware must expose management reports 0x30/0x31;

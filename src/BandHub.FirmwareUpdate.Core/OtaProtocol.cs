@@ -90,6 +90,8 @@ public sealed class DeviceInfo
     public bool SupportsXbox360Profile => (Capabilities & 0x20) != 0;
     public bool SupportsUsbProfileSwitch => (Capabilities & 0x04) != 0;
     public bool SupportsLinkDiagnostics => (Capabilities & 0x10) != 0;
+    public bool SupportsControllerManagement => (Capabilities & 0x80) != 0;
+    public bool ControllerSupportsWirelessManagement => (ControllerFeatureFlags & (1U << 14)) != 0;
     public bool SupportsBindingManagement => (Capabilities & 0x08) != 0;
     public bool SupportsControllerPackageV2 =>
         (ControllerFeatureFlags & ControllerPackageV2Feature) != 0;
