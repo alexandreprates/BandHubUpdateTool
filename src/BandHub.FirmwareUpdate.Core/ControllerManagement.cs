@@ -27,9 +27,10 @@ public sealed class ControllerManagement : IDisposable
             try
             {
                 var name = device.GetProductName();
-                if (device.GetManufacturer() == "BandHub" && name.StartsWith("BandHub GH", StringComparison.Ordinal) &&
+                if (UsbProfileManagement.MatchesIdentity(device.VendorID, device.ProductID,
+                        device.GetManufacturer(), name, device.GetSerialNumber(), 1, UsbProfile.PcHid) &&
                     device.GetMaxFeatureReportLength() >= 64 && device.GetMaxOutputReportLength() >= 64)
-                    result.Add(new(device.DevicePath, $"{name} ({device.GetSerialNumber()})"));
+                    result.Add(new(device.DevicePath, $"{(name == "TinyUSB HID" ? "BandHub Controller" : name)} ({device.GetSerialNumber()})"));
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }

@@ -12,6 +12,12 @@ public sealed record ControllerUpdateDescriptor(string Path, string Serial, stri
     ControllerUpdateInfo? Info, string UnsupportedReason)
 {
     public bool Supported => Info?.SupportsUpdate == true && Info.Health == ControllerImageHealth.Healthy;
+    public string DisplayName => Name == "TinyUSB HID" ? Info?.Target switch
+    {
+        FirmwareTarget.ControllerGh3SuperMini => "BandHub GH3 SuperMini",
+        FirmwareTarget.ControllerGh5SuperMini => "BandHub GH5 SuperMini",
+        _ => "BandHub Controller (TinyUSB HID)",
+    } : Name;
 }
 
 public interface IControllerUsbDiscovery
@@ -86,9 +92,16 @@ public sealed class ControllerUsbDiscovery : IControllerUsbDiscovery
 
     internal static void ValidateIdentity(ControllerUpdateDescriptor selected, ControllerUpdateInfo info)
     {
-        var expected = selected.Name == "BandHub GH3 SuperMini"
-            ? FirmwareTarget.ControllerGh3SuperMini : FirmwareTarget.ControllerGh5SuperMini;
-        if (info.Serial != selected.Serial || info.Target != expected ||
+        // Some Controller firmware retains TinyUSB's default product string.
+        // Obtain its model from the validated info report instead of guessing GH5.
+        var expected = selected.Name switch
+        {
+            "BandHub GH3 SuperMini" => FirmwareTarget.ControllerGh3SuperMini,
+            "BandHub GH5 SuperMini" => FirmwareTarget.ControllerGh5SuperMini,
+            "TinyUSB HID" when OtaProtocol.IsSuperMiniTarget(info.Target) => info.Target,
+            _ => (FirmwareTarget)0,
+        };
+        if (expected == 0 || info.Serial != selected.Serial || info.Target != expected ||
             (selected.Info != null && selected.Info.Target != info.Target))
             throw new IOException("USB Controller identity does not match its management reports.");
     }

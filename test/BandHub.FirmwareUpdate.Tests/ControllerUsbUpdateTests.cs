@@ -18,6 +18,28 @@ public sealed class ControllerUsbUpdateTests
     private static FirmwarePackage Package(FirmwareTarget target = FirmwareTarget.ControllerGh3SuperMini, uint version = 0x100000) =>
         FirmwarePackage.ParseAndVerify(ReleaseSourceTests.BuildPackage(target, version), ReleaseSourceTests.FixturePublicKey);
 
+    [TestCase(FirmwareTarget.ControllerGh3SuperMini, "BandHub GH3 SuperMini")]
+    [TestCase(FirmwareTarget.ControllerGh5SuperMini, "BandHub GH5 SuperMini")]
+    public void TinyUsbProductUsesValidatedReportModelAndRechecksSerialAndTarget(FirmwareTarget target, string name)
+    {
+        var info = Info with { Target = target };
+        var descriptor = Descriptor with { Name = "TinyUSB HID", Info = null };
+        Assert.DoesNotThrow(() => ControllerUsbDiscovery.ValidateIdentity(descriptor, info));
+        Assert.That((descriptor with { Info = info }).DisplayName, Is.EqualTo(name));
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(descriptor, info with { Serial = "000000000001" }));
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(descriptor, info with { Target = FirmwareTarget.ControllerGh3 }));
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(descriptor with { Info = info },
+            info with { Target = target == FirmwareTarget.ControllerGh3SuperMini ? FirmwareTarget.ControllerGh5SuperMini : FirmwareTarget.ControllerGh3SuperMini }));
+    }
+
+    [TestCase("BandHub GH3 SuperMini", FirmwareTarget.ControllerGh5SuperMini)]
+    [TestCase("BandHub GH5 SuperMini", FirmwareTarget.ControllerGh3SuperMini)]
+    [TestCase("Other HID", FirmwareTarget.ControllerGh5SuperMini)]
+    public void ReportModelMustMatchRecognizedProduct(string name, FirmwareTarget target)
+    {
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(Descriptor with { Name = name, Info = null }, Info with { Target = target }));
+    }
+
     [Test]
     public void SharedWireVectorsMatchCSharpAndRejectEveryCorruptedByte()
     {

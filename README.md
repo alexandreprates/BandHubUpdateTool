@@ -52,6 +52,10 @@ profiles...** first. Firmware without the direct-update capability is listed
 with a first-installation explanation. Install the first compatible firmware
 with an external USB flashing tool; ROM recovery is not part of this flow.
 
+Controller firmware that reports the USB product name `TinyUSB HID` is also
+recognized when its VID/PID, BandHub manufacturer and serial match. The updater
+reads the GH3/GH5 model from the validated update report before selecting firmware.
+
 USB commands use reports 0x40/0x41/0x42 from
 `BandHubControllerUsbUpdate.h` in Shared. The updater checks the selected serial,
 model, version, capability and image health again before transfer. Session and

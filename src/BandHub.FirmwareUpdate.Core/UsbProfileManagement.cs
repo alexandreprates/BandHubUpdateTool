@@ -21,8 +21,10 @@ public static class UsbProfileManagement
         if (profile == UsbProfile.Xbox360GuitarHero)
             return vendor == 0x1209 && product == 0x2882 &&
                 name == (role == 1 ? "BandHub Xbox 360 Guitar" : role == 2 ? "BandHub Xbox 360 Dongle" : "");
+        // Released Controller firmware can retain TinyUSB's default product name.
+        // Callers must still validate the role/model in the management reports.
         return role == 1 && profile == UsbProfile.PcHid && vendor == 0x303a && product == 0x1001 &&
-            name is "BandHub GH3 SuperMini" or "BandHub GH5 SuperMini";
+            name is "BandHub GH3 SuperMini" or "BandHub GH5 SuperMini" or "TinyUSB HID";
     }
 
     public static UsbProfileDevice ParseInfo(string path, string serial, byte[] response, byte expectedRole, UsbProfile expectedProfile)

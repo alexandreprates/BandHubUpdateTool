@@ -203,7 +203,7 @@ internal sealed class MainWindow : Window
         {
             var selected = SelectedUsbDescriptor();
             deviceSummary.Text = selected == null ? "Connect a Controller directly by USB and refresh." :
-                $"{selected.Name} — serial {selected.Serial}";
+                $"{selected.DisplayName} — serial {selected.Serial}";
             controllerSummary.Text = selected?.Info is { } usbInfo
                 ? $"Firmware 0x{usbInfo.FirmwareVersion:X8} — {usbInfo.Health}. {selected.UnsupportedReason}"
                 : selected?.UnsupportedReason ?? string.Empty;
@@ -635,7 +635,7 @@ internal sealed class MainWindow : Window
     {
         usbDescriptors = await usbDiscovery.DiscoverAsync(CancellationToken.None);
         dongles.RemoveAll();
-        foreach (var device in usbDescriptors) dongles.AppendText($"{device.Name} ({device.Serial})");
+        foreach (var device in usbDescriptors) dongles.AppendText($"{device.DisplayName} ({device.Serial})");
         var index = usbDescriptors.ToList().FindIndex(d => d.Serial == preferredSerial);
         dongles.Active = index >= 0 ? index : usbDescriptors.Count > 0 ? 0 : -1;
     }

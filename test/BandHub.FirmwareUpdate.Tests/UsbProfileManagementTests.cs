@@ -10,6 +10,21 @@ namespace BandHub.FirmwareUpdate.Tests;
 
 public sealed class UsbProfileManagementTests
 {
+    [TestCase("BandHub GH3 SuperMini")]
+    [TestCase("BandHub GH5 SuperMini")]
+    [TestCase("TinyUSB HID")]
+    public void PcControllerIdentityRequiresBandHubManufacturerVidPidRoleAndSerial(string product)
+    {
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", product, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.True);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "Other", product, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x1209, 0x1001, "BandHub", product, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1002, "BandHub", product, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", product, "", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", product, "AABBCCDDEEFF", 2, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", product, "AABBCCDDEEFF", 1, UsbProfile.Xbox360GuitarHero), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", "Other HID", "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+    }
+
     [TestCase(1, "BandHub Xbox 360 Guitar")]
     [TestCase(2, "BandHub Xbox 360 Dongle")]
     public void XboxIdentityRequiresRoleProductManufacturerAndSerial(byte role, string product)
