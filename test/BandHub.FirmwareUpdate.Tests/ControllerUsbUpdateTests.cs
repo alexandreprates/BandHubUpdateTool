@@ -14,7 +14,7 @@ public sealed class ControllerUsbUpdateTests
 {
     internal static ControllerUpdateInfo Info => new("D88B499205D4", FirmwareTarget.ControllerGh3SuperMini,
         0x000f0000, 0x140000, true, ControllerImageHealth.Healthy);
-    private static ControllerUpdateDescriptor Descriptor => new("selected-path", Info.Serial, "BandHub GH3 SuperMini", Info, "");
+    private static ControllerUpdateDescriptor Descriptor => new("selected-path", Info.Serial, "BandHub Guitar GH3", Info, "");
     private static FirmwarePackage Package(FirmwareTarget target = FirmwareTarget.ControllerGh3SuperMini, uint version = 0x100000) =>
         FirmwarePackage.ParseAndVerify(ReleaseSourceTests.BuildPackage(target, version), ReleaseSourceTests.FixturePublicKey);
 
@@ -38,6 +38,21 @@ public sealed class ControllerUsbUpdateTests
     public void ReportModelMustMatchRecognizedProduct(string name, FirmwareTarget target)
     {
         Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(Descriptor with { Name = name, Info = null }, Info with { Target = target }));
+    }
+
+    [TestCase("BandHub Guitar GH3", FirmwareTarget.ControllerGh3SuperMini)]
+    [TestCase("BandHub Guitar GH5", FirmwareTarget.ControllerGh5SuperMini)]
+    [TestCase("BandHub GH3 SuperMini", FirmwareTarget.ControllerGh3SuperMini)]
+    [TestCase("BandHub GH5 SuperMini", FirmwareTarget.ControllerGh5SuperMini)]
+    public void ModelNameMustMatchFirmwareTarget(string name, FirmwareTarget target)
+    {
+        var selected = Descriptor with { Name = name, Info = null };
+        Assert.DoesNotThrow(() => ControllerUsbDiscovery.ValidateIdentity(selected, Info with { Target = target }));
+        var other = target == FirmwareTarget.ControllerGh3SuperMini
+            ? FirmwareTarget.ControllerGh5SuperMini : FirmwareTarget.ControllerGh3SuperMini;
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(selected, Info with { Target = other }));
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(selected, Info with { Target = target, Serial = "000000000001" }));
+        Assert.Throws<IOException>(() => ControllerUsbDiscovery.ValidateIdentity(selected with { Name = "BandHub Guitar GH6" }, Info with { Target = target }));
     }
 
     [Test]

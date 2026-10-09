@@ -20,6 +20,6 @@ public sealed record UsbProfileSupport(bool Gameplay, bool Battery, bool Managem
 
     // VID/PID are shared with real Rock Band hardware; they are not an identity.
     public static bool IsBandHubPs3Identity(string manufacturer, string product, string serial) =>
-        manufacturer == "BandHub" && product == "BandHub PS3 Rock Band Guitar" &&
+        manufacturer == "BandHub" && (product is "BandHub Dongle" or "BandHub PS3 Rock Band Guitar") &&
         serial.Length == 12 && serial.All(char.IsAsciiHexDigit);
 }

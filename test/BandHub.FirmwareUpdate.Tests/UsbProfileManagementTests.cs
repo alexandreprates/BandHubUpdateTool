@@ -35,7 +35,10 @@ public sealed class UsbProfileManagementTests
     }
 
     [TestCase(1, "BandHub Xbox 360 Guitar")]
+    [TestCase(1, "BandHub Guitar GH3")]
+    [TestCase(1, "BandHub Guitar GH5")]
     [TestCase(2, "BandHub Xbox 360 Dongle")]
+    [TestCase(2, "BandHub Dongle")]
     public void XboxIdentityRequiresRoleProductManufacturerAndSerial(byte role, string product)
     {
         Assert.That(UsbProfileManagement.MatchesIdentity(0x1209, 0x2882, "BandHub", product, "AABBCCDDEEFF", role, UsbProfile.Xbox360GuitarHero), Is.True);
@@ -43,6 +46,19 @@ public sealed class UsbProfileManagementTests
         Assert.That(UsbProfileManagement.MatchesIdentity(0x1209, 0x2882, "BandHub", product, "", role, UsbProfile.Xbox360GuitarHero), Is.False);
         Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", product, "AABBCCDDEEFF", role, UsbProfile.Xbox360GuitarHero), Is.False);
         Assert.That(UsbProfileManagement.MatchesIdentity(0x1209, 0x2882, "BandHub", product, "AABBCCDDEEFF", (byte)(3-role), UsbProfile.Xbox360GuitarHero), Is.False);
+    }
+    [TestCase("BandHub Guitar GH3")]
+    [TestCase("BandHub Guitar GH5")]
+    [TestCase("BandHub GH3 SuperMini")]
+    [TestCase("BandHub GH5 SuperMini")]
+    public void PcControllerIdentityAcceptsCurrentAndLegacyModelNames(string name)
+    {
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", name, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.True);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x1209, 0x2882, "BandHub", name, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "Other", name, "AABBCCDDEEFF", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", name, "", 1, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", name, "AABBCCDDEEFF", 2, UsbProfile.PcHid), Is.False);
+        Assert.That(UsbProfileManagement.MatchesIdentity(0x303a, 0x1001, "BandHub", name, "AABBCCDDEEFF", 1, UsbProfile.Xbox360GuitarHero), Is.False);
     }
     [Test]
     public void ProfileCapabilitiesDoNotConfuseHardwarePresetWithUsbProfile()

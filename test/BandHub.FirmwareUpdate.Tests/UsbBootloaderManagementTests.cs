@@ -47,13 +47,14 @@ public sealed class UsbBootloaderManagementTests
         Assert.ThrowsAsync<NotSupportedException>(() => UsbProfileManagement.EnterBootloaderAsync(selected, CancellationToken.None));
     }
 
-    [Test]
-    public void PcDongleIdentityRequiresProductManufacturerAndExactSerial()
+    [TestCase("BandHub Dongle")]
+    [TestCase("BandHub Controller")]
+    public void PcDongleIdentityRequiresProductManufacturerAndExactSerial(string productName)
     {
-        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "BandHub", "BandHub Controller", Serial, Serial.ToLowerInvariant()), Is.True);
-        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "Other", "BandHub Controller", Serial, Serial), Is.False);
+        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "BandHub", productName, Serial, Serial.ToLowerInvariant()), Is.True);
+        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "Other", productName, Serial, Serial), Is.False);
         Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "BandHub", "BandHub Xbox 360 Dongle", Serial, Serial), Is.False);
-        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "BandHub", "BandHub Controller", "112233445566", Serial), Is.False);
+        Assert.That(UsbBootloaderManagement.MatchesPcDongle(0x1209, 0x2882, "BandHub", productName, "112233445566", Serial), Is.False);
     }
 
     [Test]

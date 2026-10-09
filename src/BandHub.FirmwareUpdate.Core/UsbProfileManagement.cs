@@ -20,11 +20,12 @@ public static class UsbProfileManagement
         if (manufacturer != "BandHub" || serial?.Length != 12 || !serial.All(char.IsAsciiHexDigit)) return false;
         if (profile == UsbProfile.Xbox360GuitarHero)
             return vendor == 0x1209 && product == 0x2882 &&
-                name == (role == 1 ? "BandHub Xbox 360 Guitar" : role == 2 ? "BandHub Xbox 360 Dongle" : "");
+                (role == 1 ? name is "BandHub Xbox 360 Guitar" or "BandHub Guitar GH3" or "BandHub Guitar GH5" :
+                 role == 2 && (name is "BandHub Dongle" or "BandHub Xbox 360 Dongle"));
         // Released Controller firmware can retain TinyUSB's default product name.
         // Callers must still validate the role/model in the management reports.
         return role == 1 && profile == UsbProfile.PcHid && vendor == 0x303a && product == 0x1001 &&
-            name is "BandHub GH3 SuperMini" or "BandHub GH5 SuperMini" or "TinyUSB HID";
+            name is "BandHub Guitar GH3" or "BandHub Guitar GH5" or "BandHub GH3 SuperMini" or "BandHub GH5 SuperMini" or "TinyUSB HID";
     }
 
     public static UsbProfileDevice ParseInfo(string path, string serial, byte[] response, byte expectedRole, UsbProfile expectedProfile)
@@ -47,8 +48,10 @@ public static class UsbProfileManagement
             try
             {
                 var name = device.GetProductName() ?? string.Empty; var serial = device.GetSerialNumber() ?? string.Empty;
-                var profile = name.StartsWith("BandHub Xbox 360", StringComparison.Ordinal) ? UsbProfile.Xbox360GuitarHero : UsbProfile.PcHid;
-                byte role = name == "BandHub Xbox 360 Dongle" ? (byte)2 : (byte)1;
+                byte role = name is "BandHub Dongle" or "BandHub Xbox 360 Dongle" ? (byte)2 : (byte)1;
+                // Names are shared across profiles; validate VID/PID before probing GetInfo.
+                var profile = MatchesIdentity(device.VendorID, device.ProductID, device.GetManufacturer(),
+                    name, serial, role, UsbProfile.Xbox360GuitarHero) ? UsbProfile.Xbox360GuitarHero : UsbProfile.PcHid;
                 if (!MatchesIdentity(device.VendorID, device.ProductID, device.GetManufacturer(), name, serial, role, profile) ||
                     device.GetMaxFeatureReportLength() < 64 || device.GetMaxOutputReportLength() < 64) continue;
                 var reply = await ExchangeAsync(device, 6, null, token).ConfigureAwait(false);

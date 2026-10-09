@@ -47,7 +47,9 @@ public sealed class ControllerUsbDiscovery : IControllerUsbDiscovery
                 {
                     var serial = device.GetSerialNumber();
                     var name = device.GetProductName();
-                    var profile = name == "BandHub Xbox 360 Guitar" ? UsbProfile.Xbox360GuitarHero : UsbProfile.PcHid;
+                    var profile = UsbProfileManagement.MatchesIdentity(device.VendorID, device.ProductID,
+                        device.GetManufacturer(), name, serial, 1, UsbProfile.Xbox360GuitarHero)
+                        ? UsbProfile.Xbox360GuitarHero : UsbProfile.PcHid;
                     if (!UsbProfileManagement.MatchesIdentity(device.VendorID, device.ProductID,
                             device.GetManufacturer(), name, serial, 1, profile) ||
                         !ControllerUsbUpdateProtocol.ValidSerial(serial)) continue;
@@ -96,8 +98,8 @@ public sealed class ControllerUsbDiscovery : IControllerUsbDiscovery
         // Obtain its model from the validated info report instead of guessing GH5.
         var expected = selected.Name switch
         {
-            "BandHub GH3 SuperMini" => FirmwareTarget.ControllerGh3SuperMini,
-            "BandHub GH5 SuperMini" => FirmwareTarget.ControllerGh5SuperMini,
+            "BandHub Guitar GH3" or "BandHub GH3 SuperMini" => FirmwareTarget.ControllerGh3SuperMini,
+            "BandHub Guitar GH5" or "BandHub GH5 SuperMini" => FirmwareTarget.ControllerGh5SuperMini,
             "TinyUSB HID" when OtaProtocol.IsSuperMiniTarget(info.Target) => info.Target,
             _ => (FirmwareTarget)0,
         };

@@ -12,7 +12,7 @@ public static class UsbBootloaderManagement
 {
     public static bool MatchesPcDongle(int vendor, int product, string manufacturer, string name, string serial, string expectedSerial) =>
         vendor == OtaProtocol.VendorId && product == OtaProtocol.ProductId && manufacturer == "BandHub" &&
-        name == "BandHub Controller" && serial.Length == 12 && serial.All(char.IsAsciiHexDigit) &&
+        (name is "BandHub Dongle" or "BandHub Controller") && serial.Length == 12 && serial.All(char.IsAsciiHexDigit) &&
         string.Equals(serial, expectedSerial, StringComparison.OrdinalIgnoreCase);
 
     public static async Task EnterAsync(UsbProfileDevice selected, CancellationToken token)

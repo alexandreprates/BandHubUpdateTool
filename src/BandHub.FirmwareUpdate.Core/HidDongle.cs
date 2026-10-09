@@ -88,13 +88,15 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
         CancellationToken cancellationToken) => Task.Run<IReadOnlyList<DongleDescriptor>>(() =>
     {
         var results = new List<DongleDescriptor>();
+        var profileDevices = UsbProfileManagement.DiscoverAsync(cancellationToken).GetAwaiter().GetResult();
         foreach (var device in DeviceList.Local.GetHidDevices(OtaProtocol.VendorId, OtaProtocol.ProductId))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var serialNumber = ReadSerialNumber(device);
             try
             {
-                if (device.GetProductName()?.StartsWith("BandHub Xbox 360", StringComparison.Ordinal) == true) continue;
+                if (profileDevices.Any(x => x.Path == device.DevicePath && x.Profile == UsbProfile.Xbox360GuitarHero) ||
+                    device.GetProductName()?.StartsWith("BandHub Xbox 360", StringComparison.Ordinal) == true) continue;
                 using var transport = OpenDevice(device);
                 var info = transport.ReadDeviceInfoAsync(cancellationToken).GetAwaiter().GetResult();
                 var profile = ParseUsbProfile(info.UsbProfile);
@@ -154,7 +156,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                 CanSwitchUsbProfile = true,
             });
         }
-        foreach (var device in UsbProfileManagement.DiscoverAsync(cancellationToken).GetAwaiter().GetResult().Where(x => x.Role == 2))
+        foreach (var device in profileDevices.Where(x => x.Role == 2))
             results.Add(new DongleDescriptor { Path = device.Path, SerialNumber = device.Serial,
                 DisplayName = $"BandHub Xbox 360 Dongle {device.Serial}", UsbProfile = device.Profile,
                 Supported = false, CanSwitchUsbProfile = true, CanEnterBootloader = device.CanEnterBootloader,

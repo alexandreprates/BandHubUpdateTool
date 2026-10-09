@@ -8,17 +8,18 @@ namespace BandHub.FirmwareUpdate.Tests;
 [TestFixture]
 public sealed class ControllerCalibrationTests
 {
-    [Test]
-    public void ProfileCapabilitiesAndIdentityPreventWrongDeviceCommands()
+    [TestCase("BandHub Dongle")]
+    [TestCase("BandHub PS3 Rock Band Guitar")]
+    public void ProfileCapabilitiesAndIdentityPreventWrongDeviceCommands(string productName)
     {
-        Assert.That(UsbProfileSupport.MatchesPs3Recovery(0x12ba, 0x0200, "BandHub", "BandHub PS3 Rock Band Guitar", "1C8F7372DA90", "AABBCCDDEEFF"), Is.False);
-        Assert.That(UsbProfileSupport.MatchesPs3Recovery(0x1209, 0x2882, "BandHub", "BandHub PS3 Rock Band Guitar", "1C8F7372DA90", "1C8F7372DA90"), Is.False);
+        Assert.That(UsbProfileSupport.MatchesPs3Recovery(0x12ba, 0x0200, "BandHub", productName, "1C8F7372DA90", "AABBCCDDEEFF"), Is.False);
+        Assert.That(UsbProfileSupport.MatchesPs3Recovery(0x1209, 0x2882, "BandHub", productName, "1C8F7372DA90", "1C8F7372DA90"), Is.False);
         Assert.That(UsbProfileSupport.For(UsbProfile.PcHid).Management, Is.True);
         Assert.That(UsbProfileSupport.For(UsbProfile.Ps3RockBandGuitar).Management, Is.False);
         Assert.That(UsbProfileSupport.For((UsbProfile)99).Gameplay, Is.False);
-        Assert.That(UsbProfileSupport.IsBandHubPs3Identity("BandHub", "BandHub PS3 Rock Band Guitar", "1C8F7372DA90"), Is.True);
+        Assert.That(UsbProfileSupport.IsBandHubPs3Identity("BandHub", productName, "1C8F7372DA90"), Is.True);
         Assert.That(UsbProfileSupport.IsBandHubPs3Identity("Harmonix", "Rock Band Guitar", "1C8F7372DA90"), Is.False);
-        Assert.That(UsbProfileSupport.IsBandHubPs3Identity("BandHub", "BandHub PS3 Rock Band Guitar", ""), Is.False);
+        Assert.That(UsbProfileSupport.IsBandHubPs3Identity("BandHub", productName, ""), Is.False);
     }
     [Test]
     public void DefaultWireRecordMatchesFirmware()
