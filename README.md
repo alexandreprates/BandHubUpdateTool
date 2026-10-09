@@ -73,10 +73,13 @@ production rollout. No partition-table migration or ROM flashing is performed.
 
 ## USB profiles
 
+The application displays the PC HID profile as **PC Dongle** in profile lists
+and recovery instructions. Its protocol identifier remains `PcHid` (value `1`).
+
 Current Dongle firmware contains the default PC HID identity and experimental
 PS3 Rock Band Guitar and Xbox 360 Guitar Hero identities. Select the attached Dongle and use
 `Tools > USB profiles...`; while PS3 is active, select
-`PC HID`. The Dongle persists the selection and restarts with the
+`PC Dongle`. The Dongle persists the selection and restarts with the
 requested VID/PID. The application follows the same physical Dongle across
 re-enumeration using its stable USB serial.
 

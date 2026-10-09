@@ -79,7 +79,7 @@ internal sealed class ControllerCalibrationWindow : Window
                 for (var i = 0; i < found.Count; ++i) if (found[i].Path == preferredPath) preferred = i;
                 devices.Active = preferred >= 0 ? preferred : found.Count > 0 ? 0 : -1;
                 status.Text = found.Count == 0
-                    ? connectionChoice.Active == 1 ? "No Dongle found. Connect a PC HID Dongle and turn on the paired Controller." : "No Controller found. Connect the Controller by USB and refresh."
+                    ? connectionChoice.Active == 1 ? "No Dongle found. Connect a Dongle in the PC Dongle profile and turn on the paired Controller." : "No Controller found. Connect the Controller by USB and refresh."
                     : found[devices.Active].Supported ? "Select the Controller and click Connect to read its settings." : found[devices.Active].UnsupportedReason;
             });
         }

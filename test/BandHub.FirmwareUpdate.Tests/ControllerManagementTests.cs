@@ -28,7 +28,7 @@ public sealed class ControllerManagementTests
         Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(capabilities: 0))), Does.Contain("Dongle firmware"));
         Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(features: 0))), Does.Contain("Controller firmware"));
         Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(flags: 1))), Does.Contain("Turn on"));
-        Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(), UsbProfile.Xbox360GuitarHero)), Does.Contain("PC HID"));
+        Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(), UsbProfile.Xbox360GuitarHero)), Does.Contain("PC Dongle"));
         Assert.That(ControllerManagement.WirelessUnsupportedReason(Dongle(Info(target: FirmwareTarget.ControllerGh5))), Does.Contain("Controller firmware"));
     }
 

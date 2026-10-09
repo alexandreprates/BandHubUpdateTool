@@ -45,7 +45,7 @@ public sealed class DongleBindingService
         if (descriptor.UsbProfile != UsbProfile.PcHid)
         {
             throw new NotSupportedException(
-                "Binding tools are available only in the PC HID profile.");
+                "Binding tools are available only in the PC Dongle profile.");
         }
         if (timeout <= TimeSpan.Zero)
         {

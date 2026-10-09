@@ -83,7 +83,7 @@ public static class UsbProfileManagement
     public static async Task SendProfileAsync(UsbProfileDevice descriptor, UsbProfile target, CancellationToken token)
     {
         if (!descriptor.Supports(target) || (descriptor.Profile == UsbProfile.Xbox360GuitarHero && target != UsbProfile.PcHid))
-            throw new NotSupportedException("Return to PC HID before selecting another console profile.");
+            throw new NotSupportedException("Return to PC Dongle before selecting another console profile.");
         var device = DeviceList.Local.GetHidDevices().FirstOrDefault(x => x.DevicePath == descriptor.Path)
             ?? throw new IOException("The selected device disconnected.");
         if (!MatchesIdentity(device.VendorID, device.ProductID, device.GetManufacturer(), device.GetProductName(), device.GetSerialNumber(), descriptor.Role, descriptor.Profile) ||
@@ -110,7 +110,7 @@ public static class UsbProfileManagement
             if (found != null) return found;
             await Task.Delay(250, token).ConfigureAwait(false);
         }
-        throw new TimeoutException("The same device did not reconnect in the requested profile. After startup, hold BOOT for five seconds and release to recover PC HID.");
+        throw new TimeoutException("The same device did not reconnect in the requested profile. After startup, hold BOOT for five seconds and release to recover PC Dongle.");
     }
 
     private static Task<byte[]> ExchangeAsync(HidDevice device, byte operation, byte[]? payload, CancellationToken token, bool writeOnly = false) => Task.Run(async () =>

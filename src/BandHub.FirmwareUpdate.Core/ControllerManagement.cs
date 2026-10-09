@@ -52,7 +52,7 @@ public sealed class ControllerManagement : IDisposable
     {
         var info = dongle.DeviceInfo;
         if (dongle.UsbProfile != UsbProfile.PcHid || info?.UsbProfile != 1)
-            return "Return the Dongle to PC HID using USB profiles before configuring the Controller.";
+            return "Return the Dongle to PC Dongle using USB profiles before configuring the Controller.";
         if (!info.SupportsControllerManagement)
             return "Update the Dongle firmware to enable Controller calibration and settings over wireless. Direct Controller USB remains available.";
         if (!info.ControllerBound || !info.ControllerConnected)

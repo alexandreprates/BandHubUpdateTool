@@ -25,12 +25,12 @@ internal sealed class UsbProfilesWindow : Window
         root.PackStart(status, false, false, 0);
         root.PackStart(devices, false, false, 0);
         root.PackStart(profiles, false, false, 0);
-        root.PackStart(new Label("Xbox 360 Guitar Hero is experimental until tested on your console.\nTo recover PC HID without the app: after startup, hold BOOT for five seconds, then release.")
+        root.PackStart(new Label("Xbox 360 Guitar Hero is experimental until tested on your console.\nTo recover PC Dongle without the app: after startup, hold BOOT for five seconds, then release.")
             { Xalign = 0, LineWrap = true }, false, false, 0);
         var actions = new Box(Orientation.Horizontal, 8);
         actions.PackStart(refresh, false, false, 0); actions.PackEnd(apply, false, false, 0);
         actions.PackStart(bootloader, false, false, 0);
-        bootloader.TooltipText = "Restart the selected device for USB flashing without pressing BOOT or RESET. Requires compatible firmware. Use PC HID for normal signed firmware updates.";
+        bootloader.TooltipText = "Restart the selected device for USB flashing without pressing BOOT or RESET. Requires compatible firmware. Use PC Dongle for normal signed firmware updates.";
         root.PackStart(actions, false, false, 0); Add(root);
         devices.Changed += (_, _) => FillProfiles();
         refresh.Clicked += async (_, _) => await Run(RefreshAsync);
@@ -109,7 +109,7 @@ internal sealed class UsbProfilesWindow : Window
     }
     private static string ProfileName(UsbProfile profile) => profile switch
     {
-        UsbProfile.PcHid => "PC HID",
+        UsbProfile.PcHid => "PC Dongle",
         UsbProfile.Ps3RockBandGuitar => "PS3 Rock Band Guitar",
         UsbProfile.Xbox360GuitarHero => "Xbox 360 Guitar Hero",
         _ => "Unknown",

@@ -57,7 +57,7 @@ public sealed class ControllerUsbDiscovery : IControllerUsbDiscovery
                         "Install a compatible Controller firmware once using an external USB flashing tool.");
                     if (profile != UsbProfile.PcHid)
                     {
-                        found.Add(selected with { UnsupportedReason = "Return to PC HID using USB profiles before updating." });
+                        found.Add(selected with { UnsupportedReason = "Return to PC Dongle using USB profiles before updating." });
                         continue;
                     }
                     try

@@ -293,8 +293,8 @@ internal sealed class MainWindow : Window
             "Switch this Dongle to the PS3 Rock Band Guitar profile?");
         dialog.Title = "Change USB profile";
         dialog.SecondaryText =
-            "Firmware updates are available only in the PC HID profile. " +
-            "You can return to PC HID from this application at any time.";
+            "Firmware updates are available only in the PC Dongle profile. " +
+            "You can return to PC Dongle from this application at any time.";
         dialog.AddButton("Cancel", ResponseType.Cancel);
         dialog.AddButton("Switch profile", ResponseType.Accept);
         dialog.DefaultResponse = ResponseType.Accept;
@@ -626,7 +626,7 @@ internal sealed class MainWindow : Window
 
     private static string UsbProfileName(UsbProfile profile) => profile switch
     {
-        UsbProfile.PcHid => "PC HID",
+        UsbProfile.PcHid => "PC Dongle",
         UsbProfile.Ps3RockBandGuitar => "PS3 Rock Band Guitar",
         UsbProfile.Xbox360GuitarHero => "Xbox 360 Guitar Hero",
         _ => "unknown",

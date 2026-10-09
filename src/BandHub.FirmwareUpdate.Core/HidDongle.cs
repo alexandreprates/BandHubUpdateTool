@@ -110,7 +110,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                         : !info.SupportsDongleSelfOta
                             ? "The installed firmware does not contain the self-OTA agent."
                             : profile != UsbProfile.PcHid
-                                ? "Switch this Dongle to the PC HID profile before installing firmware updates."
+                                ? "Switch this Dongle to the PC Dongle profile before installing firmware updates."
                                 : string.Empty,
                     DeviceInfo = info,
                     UsbProfile = profile,
@@ -150,7 +150,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
                     : $"BandHub PS3 Rock Band Guitar Dongle {serialNumber}",
                 Supported = false,
                 UnsupportedReason =
-                    "Switch this Dongle to the PC HID profile before installing firmware updates.",
+                    "Switch this Dongle to the PC Dongle profile before installing firmware updates.",
                 UsbProfile = UsbProfile.Ps3RockBandGuitar,
                 SerialNumber = serialNumber,
                 CanSwitchUsbProfile = true,
@@ -160,7 +160,7 @@ public sealed class HidDongleDiscovery : IDongleDiscovery
             results.Add(new DongleDescriptor { Path = device.Path, SerialNumber = device.Serial,
                 DisplayName = $"BandHub Xbox 360 Dongle {device.Serial}", UsbProfile = device.Profile,
                 Supported = false, CanSwitchUsbProfile = true, CanEnterBootloader = device.CanEnterBootloader,
-                UnsupportedReason = "Return to PC HID before updating firmware." });
+                UnsupportedReason = "Return to PC Dongle before updating firmware." });
         return results;
     }, cancellationToken);
 
