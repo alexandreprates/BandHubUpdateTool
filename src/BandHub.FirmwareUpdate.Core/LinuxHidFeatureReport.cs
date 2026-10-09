@@ -34,7 +34,19 @@ internal static class LinuxHidFeatureReport
                 $"Unable to read HID feature report from {devicePath}: " +
                 new Win32Exception(error).Message);
         }
+        ValidateResponse(buffer, result, reportId);
         return buffer;
+    }
+
+    internal static void ValidateResponse(byte[] buffer, int bytesRead, byte reportId)
+    {
+        if (bytesRead != buffer.Length || buffer.Length == 0 || buffer[0] != reportId)
+        {
+            throw new InvalidDataException(
+                $"Invalid HID feature response for report 0x{reportId:X2}: " +
+                $"received {bytesRead}/{buffer.Length} bytes, " +
+                $"prefix {Convert.ToHexString(buffer.AsSpan(0, Math.Min(buffer.Length, 8)))}.");
+        }
     }
 
     internal static nuint BuildGetFeatureRequest(int reportLength)

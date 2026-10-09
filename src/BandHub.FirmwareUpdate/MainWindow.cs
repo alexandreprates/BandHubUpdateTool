@@ -684,12 +684,14 @@ internal sealed class MainWindow : Window
     private void AppendLog(string message)
     {
         var timestamped = $"[{DateTime.Now:HH:mm:ss}] {message}\n";
+        Console.Write(timestamped);
         log.Buffer.InsertAtCursor(timestamped);
         log.ScrollToIter(log.Buffer.EndIter, 0, false, 0, 0);
     }
 
     private void ShowError(Exception error)
     {
+        Console.Error.WriteLine(error);
         AppendLog("ERROR: " + error.Message);
         using var dialog = new MessageDialog(
             this,

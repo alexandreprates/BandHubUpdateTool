@@ -188,6 +188,95 @@ public sealed class ControllerUsbUpdateTests
         }
     }
 
+    [TestCase("invalid-report")]
+    [TestCase("io")]
+    [TestCase("timeout")]
+    public async Task TransientStatusFailureRequiresValidAcknowledgementBeforeContinuing(string failure)
+    {
+        var device = new FakeDevice { StatusFailure = failure, StatusFailuresRemaining = 2 };
+        var package = Package();
+        await Run(device, package);
+        Assert.That(device.StatusFailuresRemaining, Is.Zero);
+        Assert.That(device.Received.ToArray(), Is.EqualTo(package.Bytes));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Abort));
+    }
+
+    [Test]
+    public void DeviceAbortAfterTransportFailureStopsWithRecoveryGuidanceAndOriginalCause()
+    {
+        var device = new FakeDevice
+        {
+            FailDataWrite = true, AcceptFailedWrite = true, ReportError = true, DeviceError = 8,
+        };
+        var error = Assert.ThrowsAsync<InvalidOperationException>(() => Run(device, Package()));
+        Assert.That(error!.Message, Does.Contain("aborted").And.Contain("USB data cable").And.Contain("offset 0")
+            .And.Contain("corrected firmware").And.Contain("Dongle or USB recovery"));
+        Assert.That(error.InnerException, Is.TypeOf<IOException>());
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Commit));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task TransientWriteFailureRetriesIdenticalDataOrAcceptsMatchingAcknowledgement(bool accepted)
+    {
+        var device = new FakeDevice { FailDataWrite = true, AcceptFailedWrite = accepted };
+        var package = Package();
+        await Run(device, package);
+        Assert.That(device.FailDataWrite, Is.False);
+        Assert.That(device.Received.ToArray(), Is.EqualTo(package.Bytes));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Abort));
+    }
+
+    [TestCase("invalid-report")]
+    [TestCase("io")]
+    [TestCase("timeout")]
+    public void PersistentStatusFailureTimesOutWithCauseAndAbortsWithoutCommit(string failure)
+    {
+        var device = new FakeDevice { StatusFailure = failure, StatusFailuresRemaining = int.MaxValue };
+        var error = Assert.ThrowsAsync<TimeoutException>(() => Run(device, Package()));
+        Assert.That(error!.InnerException, Is.Not.Null);
+        Assert.That(error.Message, Does.Contain("Data").And.Contain("offset 0"));
+        Assert.That(device.Commands.Last(), Is.EqualTo(ControllerUpdateCommand.Abort));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Finish));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Commit));
+    }
+
+    [Test]
+    public void CancellationDuringStatusRecoveryAbortsBeforeCommit()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var device = new FakeDevice
+        {
+            StatusFailure = "invalid-report", StatusFailuresRemaining = int.MaxValue,
+            OnStatusFailure = () => cancellation.Cancel(),
+        };
+        Assert.ThrowsAsync<TaskCanceledException>(() => Run(device, Package(), cancellation.Token));
+        Assert.That(device.Commands.Last(), Is.EqualTo(ControllerUpdateCommand.Abort));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Commit));
+    }
+
+    [Test]
+    public async Task InvalidCommitAcknowledgementReconcilesWithoutResendingOrAborting()
+    {
+        var device = new FakeDevice { InvalidCommitAck = true };
+        await Run(device, Package());
+        Assert.That(device.Commands.Count(command => command == ControllerUpdateCommand.Commit), Is.EqualTo(1));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Abort));
+        Assert.That(device.Discovered, Is.GreaterThan(0));
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task StaleCommitAcknowledgementNeverResendsAndRequiresHealthyExpectedVersion(bool healthy)
+    {
+        var device = new FakeDevice { StaleCommitAck = true, ReconnectedInfo = healthy ? null : Info };
+        if (healthy) await Run(device, Package());
+        else Assert.ThrowsAsync<TimeoutException>(() => Run(device, Package()));
+        Assert.That(device.Commands.Count(command => command == ControllerUpdateCommand.Commit), Is.EqualTo(1));
+        Assert.That(device.Commands, Does.Not.Contain(ControllerUpdateCommand.Abort));
+        Assert.That(device.Discovered, Is.GreaterThan(0));
+    }
+
     [Test]
     public async Task UncertainCommitReconcilesHealthyVersionWithoutAbort()
     {
@@ -232,8 +321,14 @@ public sealed class ControllerUsbUpdateTests
         public List<byte> Received = new();
         public Action? OnData, OnCommit;
         public bool LoseCommitAck, ReportError, WrongOffset, DropFirstDataAck;
+        public byte DeviceError = 5;
+        public bool FailDataWrite, AcceptFailedWrite, InvalidCommitAck, StaleCommitAck;
+        public string? StatusFailure;
+        public int StatusFailuresRemaining;
+        public Action? OnStatusFailure;
         public int DuplicateDataReports;
         private byte[]? lastData;
+        private byte[]? failedData;
         public int Discovered;
         public Task<IControllerUsbTransport> OpenAsync(ControllerUpdateDescriptor selected, CancellationToken token)
         { Assert.That(selected.Path, Is.EqualTo(Descriptor.Path)); return Task.FromResult<IControllerUsbTransport>(this); }
@@ -247,6 +342,21 @@ public sealed class ControllerUsbUpdateTests
         public Task<ControllerUpdateStatus> ReadStatusAsync(CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
+            if (Status.Command == ControllerUpdateCommand.Commit && InvalidCommitAck)
+                throw new InvalidDataException("Invalid Controller USB report length or ID.");
+            if (Status.Command == ControllerUpdateCommand.Commit && StaleCommitAck)
+                return Task.FromResult(Status with { Command = ControllerUpdateCommand.Finish, State = ControllerUpdateState.Ready });
+            if (Status.Command == ControllerUpdateCommand.Data && StatusFailuresRemaining > 0)
+            {
+                StatusFailuresRemaining--;
+                OnStatusFailure?.Invoke();
+                throw StatusFailure switch
+                {
+                    "invalid-report" => new InvalidDataException("Invalid Controller USB report length or ID."),
+                    "io" => new IOException("HID communication error."),
+                    _ => new TimeoutException("HID read timed out."),
+                };
+            }
             if (DropFirstDataAck && DuplicateDataReports == 0 && Status.Command == ControllerUpdateCommand.Data)
                 return Task.FromResult(Status with { BytesReceived = 0 });
             return Task.FromResult(Status);
@@ -256,6 +366,17 @@ public sealed class ControllerUsbUpdateTests
             token.ThrowIfCancellationRequested();
             var p = report.AsSpan(1).ToArray();
             var command = (ControllerUpdateCommand)p[3]; Commands.Add(command);
+            if (failedData != null && command != ControllerUpdateCommand.Abort)
+            {
+                Assert.That(report, Is.EqualTo(failedData));
+                failedData = null;
+            }
+            if (command == ControllerUpdateCommand.Data && FailDataWrite && !AcceptFailedWrite)
+            {
+                FailDataWrite = false;
+                failedData = report.ToArray();
+                throw new IOException("HID output failed before delivery.");
+            }
             Status = Status with { Command = command, SessionId = OtaProtocol.ReadUInt32(p, 4) };
             switch (command)
             {
@@ -265,8 +386,14 @@ public sealed class ControllerUsbUpdateTests
                     if (lastData?.SequenceEqual(report) == true) { DuplicateDataReports++; break; }
                     lastData = report.ToArray();
                     Received.AddRange(p.AsSpan(17, p[16]).ToArray());
-                    Status = Status with { BytesReceived = WrongOffset ? 0 : (uint)Received.Count, Error = ReportError ? (byte)5 : (byte)0 };
-                    OnData?.Invoke(); break;
+                    Status = Status with { BytesReceived = WrongOffset ? 0 : (uint)Received.Count, Error = ReportError ? DeviceError : (byte)0 };
+                    OnData?.Invoke();
+                    if (FailDataWrite)
+                    {
+                        FailDataWrite = false;
+                        throw new IOException("HID output failed after delivery.");
+                    }
+                    break;
                 case ControllerUpdateCommand.Finish:
                     Status = Status with { State = ControllerUpdateState.Ready, FirmwareVersion = 0x100000 }; break;
                 case ControllerUpdateCommand.Commit:

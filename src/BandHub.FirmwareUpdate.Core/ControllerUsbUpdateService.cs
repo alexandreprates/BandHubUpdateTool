@@ -74,7 +74,7 @@ public sealed class ControllerUsbUpdateService
                     ControllerUpdateState.RebootPending, (uint)package.Bytes.Length, CancellationToken.None)
                     .ConfigureAwait(false);
             }
-            catch (Exception error) when (error is IOException or TimeoutException) { }
+            catch (Exception error) when (error is IOException or TimeoutException or InvalidDataException) { }
             transport.Dispose();
             reporter.Report("usb-reconnect", 95, "Waiting for the same USB Controller and its image health check...");
             await WaitForHealthyAsync(original, package.FirmwareVersion).ConfigureAwait(false);
@@ -107,28 +107,67 @@ public sealed class ControllerUsbUpdateService
     {
         var report = ControllerUsbUpdateProtocol.Encode(command, session, offset, total, data);
         var deadline = Environment.TickCount64 + (long)CommandTimeout.TotalMilliseconds;
-        await transport.SendAsync(report, token).ConfigureAwait(false);
-        var retryAt = Environment.TickCount64 + (long)RetryInterval.TotalMilliseconds;
+        var retryAt = Environment.TickCount64;
+        var sendAttempted = false;
+        Exception? lastError = null;
         while (Environment.TickCount64 < deadline)
         {
             token.ThrowIfCancellationRequested();
-            var status = await transport.ReadStatusAsync(token).ConfigureAwait(false);
-            if (status.SessionId == session)
+            if (Environment.TickCount64 >= retryAt &&
+                (!sendAttempted || command != ControllerUpdateCommand.Commit))
+            {
+                // A stale but valid status also leaves Commit uncertain. Send it only once.
+                sendAttempted = true;
+                try
+                {
+                    // Only the same in-flight command is retried, with identical bytes and session.
+                    await transport.SendAsync(report, token).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is IOException or TimeoutException)
+                {
+                    // An uncertain Commit must be reconciled by identity and image health.
+                    if (command == ControllerUpdateCommand.Commit) throw;
+                    LogTransientError(error);
+                }
+                retryAt = Environment.TickCount64 + (long)RetryInterval.TotalMilliseconds;
+            }
+
+            ControllerUpdateStatus? status = null;
+            try
+            {
+                status = await transport.ReadStatusAsync(token).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is IOException or TimeoutException or InvalidDataException)
+            {
+                if (command == ControllerUpdateCommand.Commit) throw;
+                LogTransientError(error);
+            }
+            if (status?.SessionId == session)
             {
                 if (status.Error != 0 || status.State == ControllerUpdateState.Error)
-                    throw new InvalidOperationException($"Controller USB update error {status.Error}.");
+                    throw new InvalidOperationException(
+                        $"Controller USB update error {status.Error} during {command} at offset {offset}." +
+                        (status.Error == 8
+                            ? " The Controller aborted the transfer. Reconnect it and retry. " +
+                              "If this repeats with another USB data cable or port, the Controller may need " +
+                              "corrected firmware installed through a Dongle or USB recovery."
+                            : string.Empty), lastError);
                 if (status.Command == command && status.BytesReceived == expectedOffset && status.State == expectedState)
                     return status;
             }
-            if (Environment.TickCount64 >= retryAt)
-            {
-                // Only the same in-flight command is retried, with identical bytes and session.
-                await transport.SendAsync(report, token).ConfigureAwait(false);
-                retryAt = Environment.TickCount64 + (long)RetryInterval.TotalMilliseconds;
-            }
             await Task.Delay(PollInterval, token).ConfigureAwait(false);
         }
-        throw new TimeoutException("Controller did not acknowledge USB firmware data.");
+        throw new TimeoutException(
+            $"Controller did not acknowledge USB {command} at offset {offset} " +
+            $"(expected {expectedOffset} bytes, session {session:X8}).", lastError);
+
+        void LogTransientError(Exception error)
+        {
+            if (lastError == null)
+                Console.Error.WriteLine($"[{DateTime.Now:HH:mm:ss}] USB {command} at offset {offset}: " +
+                    $"retrying after {error.GetType().Name}: {error.Message}");
+            lastError = error;
+        }
     }
 
     private async Task WaitForHealthyAsync(ControllerUpdateInfo original, uint version)

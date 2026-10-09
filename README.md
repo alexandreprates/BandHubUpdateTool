@@ -59,12 +59,24 @@ reads the GH3/GH5 model from the validated update report before selecting firmwa
 USB commands use reports 0x40/0x41/0x42 from
 `BandHubControllerUsbUpdate.h` in Shared. The updater checks the selected serial,
 model, version, capability and image health again before transfer. Session and
-offset acknowledgements permit identical command retries. Finish verifies the
+offset acknowledgements permit identical command retries. Transient HID read,
+write, and malformed-response failures are retried within the command timeout;
+only a validated acknowledgement advances the transfer. Finish verifies the
 inactive image; Commit alone selects it for boot. Cancellation is available
 before Commit. After Commit, the app waits for the same serial and expected
 healthy firmware, even when the acknowledgement is lost or close is requested.
+Commit is sent only once, including when the device keeps returning an older,
+valid status while restarting. An uncertain installation is resolved by checking
+the same Controller's expected firmware version and image health.
 A disconnect before Commit leaves the old firmware selected; retry starts from
 zero. Pairing, calibration and saved profile are preserved.
+
+These host-side retries do not repair USB buffer corruption in Controller
+firmware. Repeated USB resets can require corrected Controller firmware installed
+through a Dongle or external USB recovery. The updater continues to accept only
+signed packages; a locally flashed diagnostic image is not a published update.
+Default transfer pacing is retained: slowing transfers was not required with
+the corrected Controller firmware in the Linux GH5 SuperMini bench tests.
 
 Source implementation and host tests do not establish physical acceptance.
 GH3/GH5 updates on both connections, Windows/Linux HID behavior, transfer time,
